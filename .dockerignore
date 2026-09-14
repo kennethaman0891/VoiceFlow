@@ -1,0 +1,59 @@
+# ============================================================
+# VoiceFlow — Docker ignore
+# Prevents shipping dev/build artifacts into images and containers
+# ============================================================
+
+# ---- Secrets ----
+.env
+.env.*
+*.pem
+*.key
+
+# ---- Source (keep only what we need) ----
+VoiceFlow/              # Swift/Xcode project — not needed in containers
+VoiceFlow.xcodeproj/
+VoiceFlow.yml
+*.xcodeproj/
+
+# ---- Build outputs ----
+node_modules/
+tauri-app/node_modules/
+tauri-app/dist/
+tauri-app/src-tauri/target/
+target/
+.build/
+build/
+DerivedData/
+*.dSYM
+*.log
+
+# ---- Git ----
+.git/
+.gitignore
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ---- Whisper models (downloaded at runtime via scripts) ----
+*.bin
+*.gguf
+**/models/whisper*
+
+# ---- Documentation / assets not needed in build ----
+*.png
+*.jpg
+*.jpeg
+voiceflow-*.png
+
+# ---- Playground / scratch ----
+scripts/docker-up.sh    # mounted at runtime, not copied
+Website/vendor/         # populated by setup script
+Website/models/whisper-*

@@ -1,0 +1,20 @@
+# VoiceFlow — Rust Backend .gitignore
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Profiling
+*.profraw
+*.profdata
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log

@@ -1,0 +1,87 @@
+name: VoiceFlow
+options:
+  deploymentTarget:
+    macOS: '14.0'
+  bundleIdPrefix: com.kennethaman
+  xcodeVersion: '15.0'
+  developmentLanguage: Swift
+  indentWidth: 4
+  tabWidth: 4
+  usesTabs: false
+
+# Root-level build settings.
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MACOSX_DEPLOYMENT_TARGET: '14.0'
+    # The whisper.cpp SPM package is a systemLibrary resolved via pkg-config.
+    # brew's whisper.pc only advertises its own include/lib dirs, but
+    # whisper.h #includes "ggml.h" and links -lggml which ship with the
+    # separate `ggml` formula (both linked into /opt/homebrew), so make that
+    # prefix visible to clang and ld.
+    HEADER_SEARCH_PATHS: "$(inherited) /opt/homebrew/include"
+    LIBRARY_SEARCH_PATHS: "$(inherited) /opt/homebrew/lib"
+
+# SwiftPM packages.
+# NOTE (foundation task 3a036f37): whisper.cpp REMOVED Package.swift after v1.7.4
+# (v1.7.5+ ship only CMake/xcframework builds). v1.7.4 is the newest tag whose
+# manifest exists; its product "whisper" is a systemLibrary wrapper resolved via
+# pkg-config, so a local install is required for resolution, e.g.:
+#   brew install whisper-cpp pkg-config
+# If the engine task prefers bundled sources instead, swap this for the
+# Whisper.xcframework produced by whisper.cpp's build-xcframework.sh.
+packages:
+  Whisper:
+    url: https://github.com/ggml-org/whisper.cpp
+    # NOTE: SPM requires plain semver — the git tag is "v1.7.4" but the
+    # version string here must be "1.7.4" or Xcode crashes resolving it.
+    exactVersion: 1.7.4
+
+targets:
+  VoiceFlow:
+    type: application
+    platform: macOS
+    deploymentTarget: '14.0'
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kennethaman.VoiceFlow
+        INFOPLIST_FILE: VoiceFlow/Info.plist
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "VoiceFlow needs microphone access to record your voice."
+        NSAppleEventsUsageDescription: "VoiceFlow needs to control other applications."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    sources:
+      - path: VoiceFlow/Sources
+      - path: VoiceFlow/Resources/VoiceFlow.xcassets
+        type: folder.assetcatalog
+        buildPhase: resources
+      - path: Website
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: Whisper
+        product: whisper
+
+schemes:
+  VoiceFlow:
+    build:
+      targets:
+        VoiceFlow: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      randomExecutionOrder: true
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+configs:
+  Debug: debug
+  Release: release
