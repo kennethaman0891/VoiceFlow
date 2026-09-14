@@ -1,0 +1,35 @@
+# Normalize line endings for cross-platform (Windows/macOS/Linux) development
+* text=auto
+
+# Source code — LF line endings for consistency
+*.rs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.swift text eol=lf
+
+# Windows executable / binary — never touch
+*.exe binary
+*.dll binary
+*.dylib binary
+*.so binary
+*.dmg binary
+*.msi binary
+*.bin binary
+*.png binary
+*.ico binary
+*.icns binary
+*.gz binary
+*.zip binary
+
+# Ensure .env never gets normalized or accidentally committed
+.env linguist-language=DotEnv linguist-generated
+.env.example linguist-language=DotEnv

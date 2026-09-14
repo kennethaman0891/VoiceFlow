@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <title>VoiceFlow — Local AI Dictation for macOS</title>
+    <meta name="description" content="Push-to-talk speech-to-text that runs entirely on your Mac. Offline Whisper, menu-bar dictation, optional Groq streaming." />
+    <meta name="application-name" content="VoiceFlow" />
+    <meta name="apple-mobile-web-app-title" content="VoiceFlow" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="mask-icon" href="/favicon.svg" color="#22d3ee" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="VoiceFlow — Local AI Dictation for macOS" />
+    <meta property="og:description" content="Push-to-talk speech-to-text that runs entirely on your Mac. Offline Whisper + optional Groq streaming." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/favicon.svg" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="VoiceFlow — Local AI Dictation for macOS" />
+    <meta name="twitter:description" content="Push-to-talk speech-to-text that runs entirely on your Mac." />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <div id="app">
+      <header class="app-header" role="banner">
+        <div class="logo" aria-label="VoiceFlow">
+          <span class="logo-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="26" height="26">
+              <defs>
+                <linearGradient id="vfGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#22d3ee"/>
+                  <stop offset="1" stop-color="#818cf8"/>
+                </linearGradient>
+              </defs>
+              <circle cx="16" cy="16" r="14" fill="url(#vfGrad)" opacity="0.18"/>
+              <path d="M16 7a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0v-6a4 4 0 0 0-4-4z" fill="url(#vfGrad)"/>
+              <path d="M9 15a7 7 0 0 0 14 0" fill="none" stroke="url(#vfGrad)" stroke-width="2" stroke-linecap="round"/>
+              <line x1="16" y1="22" x2="16" y2="25" stroke="url(#vfGrad)" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <span class="wordmark">VoiceFlow</span>
+          <span class="badge">LOCAL</span>
+        </div>
+        <button id="settingsToggle" class="icon-btn" type="button" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </header>
+
+      <main id="main" class="panel" role="main" aria-labelledby="vfTitle">
+        <h1 id="vfTitle" class="visually-hidden">VoiceFlow dictation</h1>
+        <div class="status" id="status" role="status" aria-live="polite">● Idle — press ⌘⇧V</div>
+
+        <div class="streaming-bar">
+          <button id="streamBtn" class="stream-btn" type="button" aria-pressed="false" aria-label="Toggle Groq streaming mode" title="Toggle Groq streaming mode">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="streamLabel">Stream (Groq)</span>
+          </button>
+        </div>
+
+        <div class="audio-levels" id="audioLevels" aria-hidden="true"></div>
+
+        <button id="micBtn" class="mic-btn" type="button" aria-label="Toggle recording" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10a7 7 0 0 1-14 0"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+
+        <div id="transcript" class="transcript" role="log" aria-live="polite" aria-relevant="additions" aria-label="Transcription output" data-empty="true"></div>
+      </main>
+
+      <div id="miniWidget" class="mini-widget" role="button" tabindex="0" aria-label="Quick record" title="Quick record">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10a7 7 0 0 1-14 0"/>
+        </svg>
+      </div>
+
+      <section class="settings" id="settings" hidden role="region" aria-labelledby="settingsHeading">
+        <h2 id="settingsHeading" class="visually-hidden">Settings</h2>
+        <label for="language">Language
+          <select id="language">
+            <option value="en">English</option>
+            <option value="sv">Swedish</option>
+            <option value="de">German</option>
+            <option value="fr">French</option>
+            <option value="es">Spanish</option>
+            <option value="auto">Auto-detect</option>
+          </select>
+        </label>
+        <div class="settings-row">
+          <label for="autopaste">Auto-copy to clipboard</label>
+          <input type="checkbox" id="autopaste" role="switch" aria-checked="false" />
+        </div>
+        <label for="modelPath">Model path
+          <input type="text" id="modelPath" placeholder="path to ggml-base.bin" autocomplete="off" />
+        </label>
+        <label for="groqKey">Groq API key
+          <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off" />
+        </label>
+        <button id="saveBtn" class="btn" type="button">Save settings</button>
+      </section>
+
+      <footer class="app-footer" role="contentinfo">
+        <span>© 2026 VoiceFlow</span>
+        <span class="dot-sep" aria-hidden="true">·</span>
+        <span>v0.1.0</span>
+        <span class="dot-sep" aria-hidden="true">·</span>
+        <span>Offline Whisper</span>
+        <span class="dot-sep" aria-hidden="true">·</span>
+        <span>Menu-bar</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

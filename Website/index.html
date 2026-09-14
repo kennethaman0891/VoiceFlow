@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Strict, same-origin-only policy. 'wasm-unsafe-eval' is required by the
+         on-device Whisper (WebAssembly); blob:/worker-src cover the audio + ONNX
+         worker. No remote origins are permitted anywhere. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>VoiceFlow — On-device dictation. Nothing leaves your device.</title>
+    <meta name="description" content="VoiceFlow turns speech into text right on your device. A local Whisper model runs in your browser and desktop app — your audio never touches a server, because there is no server.">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#0B0D14" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#F7F8FC" media="(prefers-color-scheme: light)">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" type="image/png" href="/favicon.png" />
+</head>
+<body>
+    <!-- Shared gradient definition for the brand mark (referenced by url(#flowGrad)) -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+        <defs>
+            <linearGradient id="flowGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#6D8BFF"/>
+                <stop offset="52%" stop-color="#A56BFF"/>
+                <stop offset="100%" stop-color="#59D6C6"/>
+            </linearGradient>
+        </defs>
+    </svg>
+
+    <a class="skip-link" href="#demo">Skip to the dictation demo</a>
+
+    <!-- Nav -->
+    <nav class="nav">
+        <div class="nav-inner">
+            <a class="brand" href="#top" aria-label="VoiceFlow home">
+                <img src="logo.png" alt="" width="28" height="28" class="brand-mark" aria-hidden="true" />
+                <span class="brand-name">VoiceFlow</span>
+            </a>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#how">How it works</a>
+                <a href="#download">Download</a>
+            </div>
+            <a class="btn btn-primary btn-sm" id="navDownload" href="#download">Get VoiceFlow</a>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <header class="hero" id="top">
+        <div class="hero-aura" aria-hidden="true"></div>
+        <div class="container">
+            <div class="hero-grid">
+                <!-- Left: copy + 3D logo -->
+                <div class="hero-left">
+                    <div class="hero-copy">
+                        <span class="eyebrow">
+                            <span class="eyebrow-dot"></span>
+                            Runs fully offline · no account
+                        </span>
+                        <h1>Speak.<br>It <span class="flow-text">types.</span></h1>
+                        <p class="lead">VoiceFlow turns your voice into text right on your device. The dictation model runs locally — in this browser and in the desktop app — so your audio never touches a server. There is no server.</p>
+                        <div class="cta-row">
+                            <a class="btn btn-primary" href="#download">Download for macOS &amp; Windows</a>
+                            <button class="btn btn-secondary" id="heroDemoBtn" type="button">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                            Try the live demo
+                            </button>
+                        </div>
+                        <p class="trust">On-device Whisper · No cloud · No telemetry · Open source</p>
+                    </div>
+                    <!-- 3D brand mark -->
+                    <div class="hero-logo-wrap" id="logo-container" aria-label="VoiceFlow 3D brand mark"></div>
+                </div>
+
+                <!-- Right: dictation demo -->
+                <section class="demo" id="demo" aria-labelledby="demo-title">
+                    <div class="demo-head">
+                        <span class="demo-live"><span class="demo-live-dot"></span>Live dictation</span>
+                        <span class="demo-tag" id="demo-title">on-device · whisper-tiny.en</span>
+                    </div>
+
+                    <div class="demo-stage">
+                        <canvas id="vf-ribbon" class="ribbon" aria-hidden="true"></canvas>
+                    </div>
+
+                    <div class="demo-body">
+                        <div class="transcript" id="vf-transcript" role="region" aria-live="polite" aria-label="Transcript" data-empty="true">
+                            <span class="transcript-placeholder">Your words will appear here.</span>
+                        </div>
+
+                        <div class="demo-controls">
+                            <button class="btn btn-record" id="vf-record" type="button" aria-label="Start dictation">
+                                <span class="record-icon" aria-hidden="true"></span>
+                                <span class="record-label">Start dictation</span>
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="vf-copy" type="button" hidden>Copy</button>
+                        </div>
+
+                        <p class="demo-status" id="vf-status">Ready when you are.</p>
+
+                        <!-- Shown only when the offline model assets are missing or fail to load -->
+                        <div class="demo-note" id="vf-note" hidden></div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </header>
+
+    <main>
+    <!-- Features -->
+    <section class="section features" id="features">
+        <div class="container">
+            <div class="section-head">
+                <h2>Dictation that stays on your machine</h2>
+                <p>The same on-device engine powers the web demo and the desktop apps. No round-trip to the cloud — for speed, and for privacy.</p>
+            </div>
+            <div class="feature-grid">
+                <article class="f-card">
+                    <div class="f-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="4"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
+                    </div>
+                    <h3>On-device</h3>
+                    <p>The Whisper speech model runs on your own hardware. First use downloads it once (~40 MB); after that it works with no connection at all.</p>
+                </article>
+                <article class="f-card">
+                    <div class="f-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+                    </div>
+                    <h3>Private by design</h3>
+                    <p>Audio is processed locally and discarded when it's done. Nothing is uploaded, logged, or sent to a third party — there's no backend to send it to.</p>
+                </article>
+                <article class="f-card">
+                    <div class="f-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+                    </div>
+                    <h3>Fast &amp; always ready</h3>
+                    <p>No network hop means no waiting on a server. Dictate on a plane, in a cafe, or with the Wi-Fi switched off entirely.</p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3D Logo Showcase -->
+    <section class="section mic-showcase" id="mic">
+        <div class="container">
+            <div class="mic-showcase-grid">
+                <div class="mic-showcase-info">
+                    <span class="eyebrow"><span class="eyebrow-dot"></span>Captured on-device</span>
+                    <h2>Studio-grade quality,<br><span class="flow-text">zero latency.</span></h2>
+                    <p class="lead">VoiceFlow uses a custom-tuned Whisper model optimized for dictation speed. The on-device pipeline resamples to 16 kHz mono, transcribes in real-time, and pipes the result straight into any app — no microphone settings page required.</p>
+                    <ul class="mic-features">
+                        <li><strong>16 kHz mono</strong> — optimized sample rate for Whisper tiny.en</li>
+                        <li><strong>Auto-detect voice</strong> — records only when you speak, silences are skipped</li>
+                        <li><strong>Global shortcut</strong> — ⌘⇧V (macOS) / Ctrl+Shift+V (Windows) from anywhere</li>
+                        <li><strong>Streaming mode</strong> — optional Groq API for sub-second latency</li>
+                        <li><strong>Smart editing</strong> — filler-word removal and auto-formatting built in</li>
+                    </ul>
+                    <a class="btn btn-primary" href="#download">Get VoiceFlow</a>
+                </div>
+                <div class="mic-3d-wrap" id="logo-container-2" aria-label="VoiceFlow 3D animated logo"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How it works / privacy -->
+    <section class="section how" id="how">
+        <div class="container">
+            <div class="how-grid">
+                <div class="how-intro">
+                    <h2>How it works</h2>
+                    <p>Three steps, all of them local.</p>
+                </div>
+                <ol class="how-steps">
+                    <li>
+                        <span class="how-step">Press and speak</span>
+                        <span class="how-detail">Your microphone is captured in the page — no recording is saved to disk.</span>
+                    </li>
+                    <li>
+                        <span class="how-step">Transcribed locally</span>
+                        <span class="how-detail">Whisper runs in WebAssembly on your device and turns the audio into text.</span>
+                    </li>
+                    <li>
+                        <span class="how-step">Text, instantly</span>
+                        <span class="how-detail">Copy it here. In the desktop app it types straight into whatever you're using.</span>
+                    </li>
+                </ol>
+            </div>
+            <p class="how-proof">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/></svg>
+                Don't take our word for it — open your browser's Network tab and dictate. You'll see zero requests.
+            </p>
+        </div>
+    </section>
+
+    <!-- Download -->
+    <section class="section download" id="download">
+        <div class="container">
+            <div class="section-head">
+                <h2>Get VoiceFlow</h2>
+                <p>Native menu-bar and system-tray dictation for macOS and Windows. Both transcribe on-device with offline Whisper.cpp — no cloud speech service on either platform.</p>
+            </div>
+            <div class="download-grid">
+                <article class="download-card">
+                    <div class="download-os">
+                        <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M16.5 3c.1 1-.3 2-1 2.8-.7.8-1.7 1.4-2.7 1.3-.1-1 .4-2 1-2.7C14.6 3.6 15.6 3.1 16.5 3zM19 17.2c-.5 1.1-.7 1.6-1.3 2.6-.9 1.4-2.1 3.1-3.6 3.1-1.3 0-1.7-.9-3.5-.8-1.8 0-2.2.8-3.5.8-1.5 0-2.7-1.5-3.6-2.9C1.3 16.9.6 12.3 2.3 9.4c.9-1.4 2.4-2.3 3.9-2.3 1.5 0 2.4.8 3.6.8 1.2 0 1.9-.8 3.6-.8 1.3 0 2.7.7 3.7 1.9-3.2 1.8-2.7 6.4.9 8.2z"/></svg>
+                        <div>
+                            <h3>macOS</h3>
+                            <p class="download-version">Version 1.0.0 · Beta</p>
+                        </div>
+                    </div>
+                    <ul class="download-features">
+                        <li>Menu-bar dictation (⌘⇧V)</li>
+                        <li>On-device Whisper.cpp — no cloud</li>
+                        <li>Types into any app</li>
+                        <li>History stays on your Mac</li>
+                        <li>Works with no connection</li>
+                    </ul>
+                    <button class="btn btn-primary btn-download" id="downloadMac" data-platform="macos" type="button">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Download for macOS
+                    </button>
+                    <p class="download-note">Requires macOS 14.0 or later</p>
+                </article>
+
+                <article class="download-card">
+                    <div class="download-os">
+                        <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M3 5.1l7.5-1v7.2H3V5.1zM11.3 4l9.7-1.3v9.6h-9.7V4zM3 12.9h7.5v7.1L3 19V12.9zM11.3 12.9H21v9.4l-9.7-1.3v-8.1z"/></svg>
+                        <div>
+                            <h3>Windows</h3>
+                            <p class="download-version">Version 1.0.0 · Beta</p>
+                        </div>
+                    </div>
+                    <ul class="download-features">
+                        <li>System-tray dictation (Ctrl+Shift+V)</li>
+                        <li>On-device Whisper.cpp — no cloud</li>
+                        <li>Types into any app</li>
+                        <li>Local model, nothing uploaded</li>
+                        <li>Works with no connection</li>
+                    </ul>
+                    <button class="btn btn-primary btn-download" id="downloadWin" data-platform="windows" type="button">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Download for Windows
+                    </button>
+                    <p class="download-note">Requires Windows 10 or 11</p>
+                </article>
+            </div>
+            <p class="download-foot muted">Beta builds are on the way. In the meantime you can build either app from source — see the project repository.</p>
+        </div>
+    </section>
+
+    <!-- Embed -->
+    <section class="section embed" id="embed">
+        <div class="container">
+            <div class="embed-grid">
+                <div class="embed-copy">
+                    <h2>Add dictation to your own site</h2>
+                    <p class="muted">One script tag drops a floating dictation button onto any page. It uses the same on-device Whisper pipeline — audio is transcribed in the visitor's browser and never sent anywhere.</p>
+                    <ol class="steps">
+                        <li>Host this <code>Website/</code> folder (after running setup) on your domain.</li>
+                        <li>Paste the snippet before <code>&lt;/body&gt;</code> on any page.</li>
+                        <li>A dictation button appears in the corner — tap, speak, copy.</li>
+                    </ol>
+                    <p class="embed-fallback-note muted">If the model assets aren't hosted alongside the script, the button shows a friendly setup message instead of failing.</p>
+                </div>
+                <div class="code-block">
+                    <div class="code-head">
+                        <span>embed snippet</span>
+                        <button class="btn btn-sm" id="copyCodeBtn" type="button">Copy</button>
+                    </div>
+<pre><code id="embedCode">&lt;!-- VoiceFlow dictation — paste before &lt;/body&gt;. Runs on-device; no server. --&gt;
+&lt;script&gt;
+  window.VOICEFLOW_CONFIG = {
+    position: "bottom-right",  // or "bottom-left"
+    title: "Dictate",
+    theme: "auto"              // "auto" | "dark" | "light"
+  };
+&lt;/script&gt;
+&lt;script src="/embed/voiceflow-embed.js" defer&gt;&lt;/script&gt;</code></pre>
+                    <p class="code-note">Local preview: use <code>./embed/voiceflow-embed.js</code> from this folder.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container footer-inner">
+            <a class="brand" href="#top" aria-label="VoiceFlow home">
+                <img src="logo.png" alt="" width="24" height="24" class="brand-mark" aria-hidden="true" />
+                <span class="brand-name">VoiceFlow</span>
+            </a>
+            <p class="footer-note muted">On-device dictation for macOS, Windows &amp; the web. Your voice stays yours.</p>
+            <span class="muted footer-copy">© 2026 Kenneth Aman</span>
+        </div>
+    </footer>
+
+    <script src="js/three/logo.js" type="module"></script>
+    <script src="js/logo-init.js" defer></script>
+    <script src="js/voice-agent.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

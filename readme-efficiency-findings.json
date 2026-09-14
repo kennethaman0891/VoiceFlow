@@ -1,0 +1,62 @@
+[
+  {
+    "line_start": 1,
+    "line_end": 5,
+    "summary": "Repetitive pitch: line 3 says 'nothing leaves your machine' and line 5 repeats 'fully offline, no cloud' — same concept twice in three lines.",
+    "suggested_fix": "Merge into one crisp sentence, e.g.: 'VoiceFlow turns your voice into text using a local Whisper model — fully offline, available as a cross-platform desktop app (Tauri + Rust), native macOS app (Swift 6 · XcodeGen), and a browser-based demo (WebAssembly).'"
+  },
+  {
+    "line_start": 21,
+    "line_end": 29,
+    "summary": "Feature bullet descriptions explain obvious outcomes of named features, adding word count without new information (e.g., 'Auto-copy to clipboard — optionally paste the transcript into the frontmost app').",
+    "suggested_fix": "Shorten each description to the essential detail only. Example: replace 'Auto-copy to clipboard — optionally paste the transcript into the frontmost app' with 'Auto-copy to clipboard'; replace 'Streaming transcription — real-time partial transcripts via Groq API (optional, free tier)' with 'Streaming transcription (Groq API, optional)'. Keep only details that aren't self-evident."
+  },
+  {
+    "line_start": 47,
+    "line_end": 54,
+    "summary": "Windows section has verbose explanatory comments telling users what they should already know ('Install Rust (if not installed)', 'Download from: ...', 'Select "Desktop development with C++"').",
+    "suggested_fix": "Trim to bare commands and links; remove meta-commentary that restates the obvious or duplicates the linked page's own instructions."
+  },
+  {
+    "line_start": 63,
+    "line_end": 81,
+    "summary": "The manual setup path repeats work the one-line scripts do, but with extra inline comments explaining what each command does ('Download the Whisper model (141MB)'). Readers who can read a script don't need line-by-line commentary.",
+    "suggested_fix": "Keep only the one-line script paths and note the manual path once as an alternative. Remove the curl comment explaining the file size and URL purpose; the command itself is self-explanatory."
+  },
+  {
+    "line_start": 112,
+    "line_end": 112,
+    "summary": "Last sentence re-states a prerequisite that was already covered in the 'macOS' and 'One-Time Setup' sections.",
+    "suggested_fix": "Delete the sentence entirely — the build tool requirements belong in the prerequisites section, not buried after the Xcode steps."
+  },
+  {
+    "line_start": 126,
+    "line_end": 130,
+    "summary": "'What it does' section restates features already covered in the feature list (lines 21–29), just phrased differently.",
+    "suggested_fix": "Replace with a short note that this section is about the streaming mode's unique value-add (sub-second latency, smart editing on-the-fly) without re-listing general product features."
+  },
+  {
+    "line_start": 134,
+    "line_end": 134,
+    "summary": "'pure offline dictation page that runs Whisper tiny.en entirely in the browser via WebAssembly — no backend, no API key' repeats the same 'no cloud / no API key' pitch already made in line 3.",
+    "suggested_fix": "Shorten to: 'A fully offline browser-based dictation page using the tiny.en Whisper model via WASM — no backend or API key needed.'"
+  },
+  {
+    "line_start": 180,
+    "line_end": 186,
+    "summary": "Privacy section includes 'Open your browser's Network tab and dictate — you'll see zero requests in default mode.' This is hand-holding instruction for something most technically-literate readers will verify themselves.",
+    "suggested_fix": "Delete that sentence; the bullet above it already states 'Zero network requests. All processing happens on your device.'"
+  },
+  {
+    "line_start": 187,
+    "line_end": 250,
+    "summary": "Project structure tree is extremely granular — nearly every individual source file is listed with a one-line comment, most of which restate what the filename already conveys (e.g., 'AppSettings.swift — Persisted settings', 'ModelManager.swift — Model download & caching').",
+    "suggested_fix": "Collapse to directory-level listings with brief per-directory descriptions instead of per-file annotations. Keep the structure informative but remove comment-text that duplicates the filename's meaning."
+  },
+  {
+    "line_start": 257,
+    "line_end": 258,
+    "summary": "The 'Built for Kenneth Aman' footer is personal metadata that doesn't help a reader understand or use the project.",
+    "suggested_fix": "Remove unless this is intentionally part of the project branding."
+  }
+]

@@ -1,0 +1,5 @@
+# Ensures cmake 4.x tolerates the older cmake_minimum_required() used by the
+# `samplerate` and `whisper.cpp` C dependencies (otherwise the build fails with
+# "Compatibility with CMake < 3.5 has been removed").
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

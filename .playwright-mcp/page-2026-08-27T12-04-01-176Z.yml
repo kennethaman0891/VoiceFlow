@@ -1,0 +1,156 @@
+- generic [active] [ref=f1e1]:
+  - link "Skip to the dictation demo" [ref=f1e2] [cursor=pointer]:
+    - /url: "#demo"
+  - navigation [ref=f1e3]:
+    - generic [ref=f1e4]:
+      - link "VoiceFlow home" [ref=f1e5] [cursor=pointer]:
+        - /url: "#top"
+        - generic [ref=f1e10]: VoiceFlow
+      - generic [ref=f1e11]:
+        - link "Features" [ref=f1e12] [cursor=pointer]:
+          - /url: "#features"
+        - link "How it works" [ref=f1e13] [cursor=pointer]:
+          - /url: "#how"
+        - link "Download" [ref=f1e14] [cursor=pointer]:
+          - /url: "#download"
+      - link "Get VoiceFlow" [ref=f1e15] [cursor=pointer]:
+        - /url: "#download"
+  - banner [ref=f1e16]:
+    - generic [ref=f1e18]:
+      - generic [ref=f1e19]:
+        - generic [ref=f1e20]:
+          - generic [ref=f1e21]: Runs fully offline · no account
+          - heading "Speak. It types." [level=1] [ref=f1e23]: Speak.It types.
+          - paragraph [ref=f1e24]: VoiceFlow turns your voice into text right on your device. The dictation model runs locally — in this browser and in the desktop app — so your audio never touches a server. There is no server.
+          - generic [ref=f1e25]:
+            - link "Download for macOS & Windows" [ref=f1e26] [cursor=pointer]:
+              - /url: "#download"
+            - button "Try the live demo" [ref=f1e27] [cursor=pointer]
+          - paragraph [ref=f1e31]: On-device Whisper · No cloud · No telemetry · Open source
+        - generic "VoiceFlow 3D brand mark" [ref=f1e32]
+      - region "on-device · whisper-tiny.en" [ref=f1e34]:
+        - generic [ref=f1e35]:
+          - generic [ref=f1e36]: Live dictation
+          - generic [ref=f1e38]: on-device · whisper-tiny.en
+        - generic [ref=f1e41]:
+          - region "Transcript" [ref=f1e42]: Your words will appear here.
+          - generic [ref=f1e43]:
+            - button "Start dictation" [ref=f1e44] [cursor=pointer]
+            - button "Copy" [ref=f1e47] [cursor=pointer]
+          - paragraph [ref=f1e48]: Ready when you are.
+  - main [ref=f1e49]:
+    - generic [ref=f1e51]:
+      - generic [ref=f1e52]:
+        - heading "Dictation that stays on your machine" [level=2] [ref=f1e53]
+        - paragraph [ref=f1e54]: The same on-device engine powers the web demo and the desktop apps. No round-trip to the cloud — for speed, and for privacy.
+      - generic [ref=f1e55]:
+        - article [ref=f1e56]:
+          - heading "On-device" [level=3] [ref=f1e62]
+          - paragraph [ref=f1e63]: The Whisper speech model runs on your own hardware. First use downloads it once (~40 MB); after that it works with no connection at all.
+        - article [ref=f1e64]:
+          - heading "Private by design" [level=3] [ref=f1e69]
+          - paragraph [ref=f1e70]: Audio is processed locally and discarded when it's done. Nothing is uploaded, logged, or sent to a third party — there's no backend to send it to.
+        - article [ref=f1e71]:
+          - heading "Fast & always ready" [level=3] [ref=f1e75]
+          - paragraph [ref=f1e76]: No network hop means no waiting on a server. Dictate on a plane, in a cafe, or with the Wi-Fi switched off entirely.
+    - generic [ref=f1e79]:
+      - generic [ref=f1e80]:
+        - generic [ref=f1e81]: Captured on-device
+        - heading "Studio-grade quality, zero latency." [level=2] [ref=f1e83]: Studio-grade quality,zero latency.
+        - paragraph [ref=f1e84]: VoiceFlow uses a custom-tuned Whisper model optimized for dictation speed. The on-device pipeline resamples to 16 kHz mono, transcribes in real-time, and pipes the result straight into any app — no microphone settings page required.
+        - list [ref=f1e85]:
+          - listitem [ref=f1e86]:
+            - strong [ref=f1e87]: 16 kHz mono
+            - text: — optimized sample rate for Whisper tiny.en
+          - listitem [ref=f1e88]:
+            - strong [ref=f1e89]: Auto-detect voice
+            - text: — records only when you speak, silences are skipped
+          - listitem [ref=f1e90]:
+            - strong [ref=f1e91]: Global shortcut
+            - text: — ⌘⇧V (macOS) / Ctrl+Shift+V (Windows) from anywhere
+          - listitem [ref=f1e92]:
+            - strong [ref=f1e93]: Streaming mode
+            - text: — optional Groq API for sub-second latency
+          - listitem [ref=f1e94]:
+            - strong [ref=f1e95]: Smart editing
+            - text: — filler-word removal and auto-formatting built in
+        - link "Get VoiceFlow" [ref=f1e96] [cursor=pointer]:
+          - /url: "#download"
+      - generic "VoiceFlow 3D microphone preview" [ref=f1e97]
+    - generic [ref=f1e100]:
+      - generic [ref=f1e101]:
+        - generic [ref=f1e102]:
+          - heading "How it works" [level=2] [ref=f1e103]
+          - paragraph [ref=f1e104]: Three steps, all of them local.
+        - list [ref=f1e105]:
+          - listitem [ref=f1e106]:
+            - generic [ref=f1e107]: Press and speak
+            - generic [ref=f1e108]: Your microphone is captured in the page — no recording is saved to disk.
+          - listitem [ref=f1e109]:
+            - generic [ref=f1e110]: Transcribed locally
+            - generic [ref=f1e111]: Whisper runs in WebAssembly on your device and turns the audio into text.
+          - listitem [ref=f1e112]:
+            - generic [ref=f1e113]: Text, instantly
+            - generic [ref=f1e114]: Copy it here. In the desktop app it types straight into whatever you're using.
+      - paragraph [ref=f1e115]: Don't take our word for it — open your browser's Network tab and dictate. You'll see zero requests.
+    - generic [ref=f1e119]:
+      - generic [ref=f1e120]:
+        - heading "Get VoiceFlow" [level=2] [ref=f1e121]
+        - paragraph [ref=f1e122]: Native menu-bar and system-tray dictation for macOS and Windows. Both transcribe on-device with offline Whisper.cpp — no cloud speech service on either platform.
+      - generic [ref=f1e123]:
+        - article [ref=f1e124]:
+          - generic [ref=f1e128]:
+            - heading "macOS" [level=3] [ref=f1e129]
+            - paragraph [ref=f1e130]: Version 1.0.0 · Beta
+          - list [ref=f1e131]:
+            - listitem [ref=f1e132]: Menu-bar dictation (⌘⇧V)
+            - listitem [ref=f1e133]: On-device Whisper.cpp — no cloud
+            - listitem [ref=f1e134]: Types into any app
+            - listitem [ref=f1e135]: History stays on your Mac
+            - listitem [ref=f1e136]: Works with no connection
+          - button "Download for macOS" [ref=f1e137] [cursor=pointer]
+          - paragraph [ref=f1e141]: Requires macOS 14.0 or later
+        - article [ref=f1e142]:
+          - generic [ref=f1e146]:
+            - heading "Windows" [level=3] [ref=f1e147]
+            - paragraph [ref=f1e148]: Version 1.0.0 · Beta
+          - list [ref=f1e149]:
+            - listitem [ref=f1e150]: System-tray dictation (Ctrl+Shift+V)
+            - listitem [ref=f1e151]: On-device Whisper.cpp — no cloud
+            - listitem [ref=f1e152]: Types into any app
+            - listitem [ref=f1e153]: Local model, nothing uploaded
+            - listitem [ref=f1e154]: Works with no connection
+          - button "Download for Windows" [ref=f1e155] [cursor=pointer]
+          - paragraph [ref=f1e159]: Requires Windows 10 or 11
+      - paragraph [ref=f1e160]: Beta builds are on the way. In the meantime you can build either app from source — see the project repository.
+    - generic [ref=f1e163]:
+      - generic [ref=f1e164]:
+        - heading "Add dictation to your own site" [level=2] [ref=f1e165]
+        - paragraph [ref=f1e166]: One script tag drops a floating dictation button onto any page. It uses the same on-device Whisper pipeline — audio is transcribed in the visitor's browser and never sent anywhere.
+        - list [ref=f1e167]:
+          - listitem [ref=f1e168]:
+            - text: Host this
+            - code [ref=f1e169]: Website/
+            - text: folder (after running setup) on your domain.
+          - listitem [ref=f1e170]:
+            - text: Paste the snippet before
+            - code [ref=f1e171]: </body>
+            - text: on any page.
+          - listitem [ref=f1e172]: A dictation button appears in the corner — tap, speak, copy.
+        - paragraph [ref=f1e173]: If the model assets aren't hosted alongside the script, the button shows a friendly setup message instead of failing.
+      - generic [ref=f1e174]:
+        - generic [ref=f1e175]:
+          - generic [ref=f1e176]: embed snippet
+          - button "Copy" [ref=f1e177] [cursor=pointer]
+        - code [ref=f1e179]: "<!-- VoiceFlow dictation — paste before </body>. Runs on-device; no server. --> <script> window.VOICEFLOW_CONFIG = { position: \"bottom-right\", // or \"bottom-left\" title: \"Dictate\", theme: \"auto\" // \"auto\" | \"dark\" | \"light\" }; </script> <script src=\"/embed/voiceflow-embed.js\" defer></script>"
+        - paragraph [ref=f1e180]:
+          - text: "Local preview: use"
+          - code [ref=f1e181]: ./embed/voiceflow-embed.js
+          - text: from this folder.
+  - contentinfo [ref=f1e182]:
+    - generic [ref=f1e183]:
+      - link "VoiceFlow home" [ref=f1e184] [cursor=pointer]:
+        - /url: "#top"
+        - generic [ref=f1e189]: VoiceFlow
+      - paragraph [ref=f1e190]: On-device dictation for macOS, Windows & the web. Your voice stays yours.
+      - generic [ref=f1e191]: © 2026 Kenneth Aman

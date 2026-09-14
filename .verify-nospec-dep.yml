@@ -1,0 +1,68 @@
+name: VoiceFlow
+options:
+  deploymentTarget:
+    macOS: '14.0'
+  bundleIdPrefix: com.kennethaman
+  xcodeVersion: '15.0'
+  developmentLanguage: Swift
+  indentWidth: 4
+  tabWidth: 4
+  usesTabs: false
+
+# Root-level build settings.
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MACOSX_DEPLOYMENT_TARGET: '14.0'
+
+# SwiftPM packages.
+# NOTE (foundation task 3a036f37): whisper.cpp REMOVED Package.swift after v1.7.4
+# (v1.7.5+ ship only CMake/xcframework builds). v1.7.4 is the newest tag whose
+# manifest exists; its product "whisper" is a systemLibrary wrapper resolved via
+# pkg-config, so a local install is required for resolution, e.g.:
+#   brew install whisper-cpp pkg-config
+# If the engine task prefers bundled sources instead, swap this for the
+# Whisper.xcframework produced by whisper.cpp's build-xcframework.sh.
+
+targets:
+  VoiceFlow:
+    type: application
+    platform: macOS
+    deploymentTarget: '14.0'
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kennethaman.VoiceFlow
+        INFOPLIST_FILE: VoiceFlow/Info.plist
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "VoiceFlow needs microphone access to record your voice."
+        NSAppleEventsUsageDescription: "VoiceFlow needs to control other applications."
+    sources:
+      - path: VoiceFlow/Sources
+      - path: Website
+        type: folder
+        buildPhase: resources
+    dependencies: []
+
+schemes:
+  VoiceFlow:
+    build:
+      targets:
+        VoiceFlow: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      randomExecutionOrder: true
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+configs:
+  Debug: debug
+  Release: release

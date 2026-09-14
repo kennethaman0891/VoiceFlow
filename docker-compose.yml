@@ -1,0 +1,138 @@
+# ============================================================
+# VoiceFlow — Docker Compose
+#
+# Services:
+#   ollama      — Local LLM server (phi-3.5-mini) for smart editing
+#   whisper-api — Self-hosted Whisper STT (alternative to Groq)
+#   dev         — Tauri build environment (run commands inside)
+#
+# Quick start:
+#   docker compose up -d ollama whisper-api
+#   # Then open the desktop app; it will hit http://host.docker.internal:11434
+#
+# Full stack (including dev shell):
+#   docker compose up -d
+#   docker compose exec dev bash
+# ============================================================
+
+services:
+  # ───────────────────────────────────────────────────────────
+  # Ollama — local LLM for the smart-editing layer
+  # Runs phi-3.5-mini (quantized) by default. Swap the model in
+  # the build args if you need more quality or less RAM.
+  # ───────────────────────────────────────────────────────────
+  ollama:
+    build:
+      context: .
+      dockerfile: docker/ollama/Dockerfile
+      args:
+        PULL_MODELS: "phi-3.5-mini:q4_K_M"
+        # Alternative models (uncomment one and rebuild):
+        # PULL_MODELS: "llama3.2:1b"
+        # PULL_MODELS: "mistral:7b"
+    image: voiceflow/ollama:latest
+    container_name: voiceflow-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - voiceflow-ollama-data:/root/.ollama/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    # GPU support — uncomment the next block on machines with NVIDIA GPUs:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ───────────────────────────────────────────────────────────
+  # Whisper API — self-hosted transcription fallback
+  # Replaces Groq for offline-first workflows. Accepts audio
+  # files and returns transcribed text + segments.
+  # ───────────────────────────────────────────────────────────
+  whisper-api:
+    build:
+      context: .
+      dockerfile: docker/whisper-api/Dockerfile
+    image: voiceflow/whisper-api:latest
+    container_name: voiceflow-whisper-api
+    ports:
+      - "8081:8080"
+    environment:
+      WHISPER_MODEL: "base"       # tiny | base | small | medium | large-v3
+      WHISPER_DEVICE: "cpu"      # cpu | cuda (if GPU available)
+      WHISPER_CACHE: "/app/models"
+    volumes:
+      - voiceflow-whisper-cache:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ───────────────────────────────────────────────────────────
+  # Dev — Tauri build environment
+  # Use this container to build the desktop app in a clean env.
+  # Does NOT expose a port — run commands inside it.
+  #
+  # Examples:
+  #   docker compose exec dev bash
+  #   docker compose run --rm dev npm run tauri dev
+  #   docker compose run --rm dev npm run tauri build
+  # ───────────────────────────────────────────────────────────
+  dev:
+    build:
+      context: .
+      dockerfile: docker/dev/Dockerfile
+    image: voiceflow/dev:latest
+    container_name: voiceflow-dev
+    working_dir: /workspace/tauri-app
+    volumes:
+      - type: bind
+        source: ./tauri-app
+        target: /workspace/tauri-app
+      - type: bind
+        source: ./scripts
+        target: /workspace/scripts
+      - voiceflow-cargo-cache:/root/.cargo/registry
+      - voiceflow-npm-cache:/workspace/tauri-app/node_modules
+      - voiceflow-models:/workspace/tauri-app/src-tauri/models
+      - voiceflow-dist:/workspace/tauri-app/dist
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OLLAMA_HOST=http://ollama:11434
+      - WHISPER_API_URL=http://whisper-api:8080
+    # Pass through host environment so the app can reach Ollama/Whisper
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true
+    depends_on:
+      ollama:
+        condition: service_healthy
+      whisper-api:
+        condition: service_healthy
+
+# ── Named volumes (persist models across rebuilds) ─────────────
+volumes:
+  voiceflow-ollama-data:
+    name: voiceflow-ollama-data
+  voiceflow-whisper-cache:
+    name: voiceflow-whisper-cache
+  voiceflow-cargo-cache:
+    name: voiceflow-cargo-cache
+  voiceflow-npm-cache:
+    name: voiceflow-npm-cache
+  voiceflow-models:
+    name: voiceflow-models
+  voiceflow-dist:
+    name: voiceflow-dist

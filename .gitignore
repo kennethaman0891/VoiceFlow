@@ -1,0 +1,92 @@
+# ============================================
+# VoiceFlow — Root .gitignore
+# Covers: macOS, Windows, Linux, Node, Rust, Xcode, secrets
+# ============================================
+
+# ---- Secrets / Environment ----
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# ---- Xcode / Swift ----
+*.xcodeproj/
+*.xcworkspace/
+build/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.playground/
+.swiftpm/
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# ---- Windows ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.msi
+*.nsis
+
+# ---- Linux ----
+*~
+.directory
+.trash*
+
+# ---- Rust / Cargo ----
+target/
+Cargo.lock
+
+# ---- Node / JavaScript ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ---- Whisper models (140MB+ binary files — download separately, see README) ----
+*.bin
+*.gguf
+models/
+
+# ---- Build artifacts ----
+default.profraw
+*.profraw
+*.profdata
+*.log
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

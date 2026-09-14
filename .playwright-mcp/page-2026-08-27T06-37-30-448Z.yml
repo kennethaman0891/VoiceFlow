@@ -1,0 +1,14 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: ◉
+      - generic [ref=e6]: VoiceFlow
+      - generic [ref=e7]: LOCAL
+    - button "⚙" [ref=e8] [cursor=pointer]
+  - main [ref=e9]:
+    - generic [ref=e10]: ● Idle — press ⌘⇧V
+    - button "Stream (Groq)" [ref=e12] [cursor=pointer]
+    - button "Toggle recording" [ref=e48] [cursor=pointer]
+    - generic [ref=e52]: Your words will appear here…
+  - generic "Quick record (mini mode)" [ref=e53] [cursor=pointer]
+  - contentinfo [ref=e57]: Offline Whisper · Menu-bar
