@@ -1,6 +1,8 @@
 # VoiceFlow
 
-On-device speech-to-text. Nothing leaves your machine.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#) [![Language](https://img.shields.io/badge/language-Swift%20%7C%20Rust%20%7C%20JavaScript-orange.svg)](#)
+
+On-device speech-to-text & voice dictation. Nothing leaves your machine.
 
 VoiceFlow turns your voice into text using a local Whisper model — fully offline, no cloud, no API key required. Available as a cross-platform desktop app (Tauri + Rust) for **macOS, Windows, and Linux**, a native macOS app (Swift 6 · XcodeGen), and a browser-based demo (WebAssembly).
 
