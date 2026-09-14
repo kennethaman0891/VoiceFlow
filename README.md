@@ -280,7 +280,15 @@ VoiceFlow/
 
 ## License
 
-MIT
+This project is triple-licensed under your choice of:
+
+| License | Key Points |
+|---------|------------|
+| [**MIT**](https://opensource.org/licenses/MIT) | Simple, permissive — use anywhere, no restrictions |
+| [**Apache 2.0**](https://www.apache.org/licenses/LICENSE-2.0) | MIT + patent protection — contributors grant patent rights |
+| [**GPL v3**](https://www.gnu.org/licenses/gpl-3.0.html) | Copyleft — derivative works must also be open source |
+
+You may choose to use, distribute, and/or modify this software under any one (or more) of these licenses. See [LICENSE](LICENSE) for full text.
 
 ---
 
