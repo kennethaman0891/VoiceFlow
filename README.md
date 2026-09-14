@@ -8,6 +8,19 @@ VoiceFlow turns your voice into text using a local Whisper model — fully offli
 ![VoiceFlow Mic](voiceflow-mic-final.png)
 ![VoiceFlow Showcase](voiceflow-mic-showcase.png)
 
+## About
+
+VoiceFlow is a privacy-first speech-to-text application built for developers, writers, and anyone who wants to dictate text without sending audio to the cloud. It runs OpenAI's Whisper model entirely on your device — no internet connection, no API keys, no data leaving your machine.
+
+**Why VoiceFlow?**
+- **Privacy by design** — your voice recordings never leave your computer
+- **No vendor lock-in** — works offline, no subscription or API costs
+- **Cross-platform** — native macOS app, Tauri desktop app (Windows/Linux), and browser demo
+- **Developer-friendly** — embed dictation into any website with a single script tag
+- **Smart editing** — automatic filler-word removal, punctuation, and formatting
+
+**Built with:** Swift 6, Rust, Tauri v2, whisper.cpp, Transformers.js, WebAssembly
+
 ## Implementations
 
 | Platform | Stack | Location |
