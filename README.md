@@ -274,8 +274,7 @@ VoiceFlow/
 │   └── dev/Dockerfile           # Tauri build env (Rust + Node + WebKit pre-installed)
 ├── docker-compose.yml           # Orchestrates ollama + whisper-api + dev
 ├── .dockerignore                # Excludes build artifacts from images
-├── VoiceFlow.yml                # XcodeGen config
-└── .env.example                 # API key template
+└── VoiceFlow.yml                # XcodeGen config
 ```
 
 ## License
