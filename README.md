@@ -1,27 +1,41 @@
 # VoiceFlow
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#) [![Language](https://img.shields.io/badge/language-Swift%20%7C%20Rust%20%7C%20JavaScript-orange.svg)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue)](LICENSE) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#) [![Language](https://img.shields.io/badge/language-Swift%20%7C%20Rust%20%7C%20JavaScript-orange.svg)](#) [![GitHub stars](https://img.shields.io/github/stars/kennethaman0891/VoiceFlow?style=social)](https://github.com/kennethaman0891/VoiceFlow/stargazers) [![GitHub forks](https://img.shields.io/github/forks/kennethaman0891/VoiceFlow?style=social)](https://github.com/kennethaman0891/VoiceFlow/network/members)
 
-On-device speech-to-text & voice dictation. Nothing leaves your machine.
+<div align="center">
 
-VoiceFlow turns your voice into text using a local Whisper model — fully offline, no cloud, no API key required. Available as a cross-platform desktop app (Tauri + Rust) for **macOS, Windows, and Linux**, a native macOS app (Swift 6 · XcodeGen), and a browser-based demo (WebAssembly).
+**Privacy-first offline speech-to-text & voice dictation for macOS, Windows & Linux.** Runs Whisper entirely on-device — no cloud, no API keys, no telemetry.
+
+[**Download**](#quick-start) · [**Browser Demo**](#browser-demo) · [**Embed Widget**](#embed-on-your-own-site) · [**Docker Setup**](#docker--full-backend-stack--dev-environment) · [**GitHub**](https://github.com/kennethaman0891/VoiceFlow)
+
+</div>
 
 ![VoiceFlow UI](voiceflow-ui.png)
 ![VoiceFlow Mic](voiceflow-mic-final.png)
 ![VoiceFlow Showcase](voiceflow-mic-showcase.png)
 
-## About
+---
 
-VoiceFlow is a privacy-first speech-to-text application built for developers, writers, and anyone who wants to dictate text without sending audio to the cloud. It runs OpenAI's Whisper model entirely on your device — no internet connection, no API keys, no data leaving your machine.
+## What is VoiceFlow?
 
-**Why VoiceFlow?**
-- **Privacy by design** — your voice recordings never leave your computer
-- **No vendor lock-in** — works offline, no subscription or API costs
-- **Cross-platform** — native macOS app, Tauri desktop app (Windows/Linux), and browser demo
-- **Developer-friendly** — embed dictation into any website with a single script tag
-- **Smart editing** — automatic filler-word removal, punctuation, and formatting
+VoiceFlow is an **open-source, offline voice dictation app** that transcribes your speech to text using OpenAI's Whisper model — running **100% locally on your device**. No internet required. No data sent to the cloud. No API keys. No subscriptions.
 
-**Built with:** Swift 6, Rust, Tauri v2, whisper.cpp, Transformers.js, WebAssembly
+Built for **developers, writers, journalists, and privacy-conscious users** who want fast, accurate speech-to-text without compromising their data.
+
+### Why Choose VoiceFlow?
+
+| Feature | VoiceFlow | Cloud Alternatives (Google, Otter.ai, etc.) |
+|---------|-----------|---------------------------------------------|
+| 🔄 **Offline mode** | ✅ Full offline STT | ❌ Requires internet |
+| 🔒 **Privacy** | ✅ Zero data leaves your device | ❌ Audio uploaded to servers |
+| 💰 **Cost** | ✅ Free forever | ❌ Monthly subscriptions |
+| 🔑 **API Keys** | ✅ None required | ❌ Required |
+| 🖥️ **Platforms** | ✅ macOS, Windows, Linux + Web | ⚠️ Limited |
+| 📦 **Self-hosted API** | ✅ Docker setup included | ❌ Not available |
+| 🔌 **Embed widget** | ✅ Add to any website | ❌ Rare |
+| ⌨️ **Global shortcut** | ✅ Dictate from anywhere | ⚠️ App-dependent |
+
+---
 
 ## Implementations
 
@@ -31,17 +45,24 @@ VoiceFlow is a privacy-first speech-to-text application built for developers, wr
 | **Cross-platform desktop** | Tauri v2 · Rust · whisper-rs | `tauri-app/` |
 | **Browser demo** | HTML · Transformers.js · ONNX WASM | `Website/` |
 
+**Tech stack:** Swift 6, Rust, Tauri v2, whisper.cpp, Ollama, Transformers.js, WebAssembly, Docker
+
+---
+
 ## Features
 
-- **Offline dictation** — speech recognition runs entirely on-device via local Whisper
-- **Global shortcut** — ⌘⇧V (macOS) / Ctrl+Shift+V (Windows/Linux) to toggle recording from anywhere
-- **System tray / menu-bar app** — runs in the background, shows window on demand; Dock-less on macOS (`LSUIElement`)
-- **Auto-copy to clipboard** — optionally paste the transcript into the frontmost app
-- **Streaming transcription** — real-time partial transcripts via Groq API (optional, free tier)
-- **Smart editing** — filler-word removal and auto-formatting (um, uh, like, etc.)
-- **Mini widget** — floating mic icon for quick one-tap recording
-- **Dark premium UI** — cyan/indigo accent with recording glow animations
-- **Embedded dictation** — add a floating dictation widget to any website
+- **🔇 Offline dictation** — Speech recognition runs entirely on-device via local Whisper (whisper.cpp / whisper-rs)
+- **⌨️ Global shortcut** — `⌘⇧V` (macOS) / `Ctrl+Shift+V` (Windows/Linux) to toggle recording from any app
+- **📋 Auto-copy to clipboard** — Optionally paste the transcript into the frontmost application automatically
+- **💻 System tray / menu-bar app** — Runs in the background, shows window on demand; Dock-less on macOS (`LSUIElement`)
+- **🌊 Streaming transcription** — Optional real-time partial transcripts via Groq's free Whisper API (~275ms latency)
+- **✨ Smart editing** — Automatic filler-word removal (um, uh, like), punctuation restoration, and text formatting
+- **🎙️ Mini widget** — Floating mic icon for quick one-tap recording from anywhere on screen
+- **🌑 Dark premium UI** — Cyan/indigo accent with recording glow animations
+- **🔗 Embedded dictation** — Add a floating dictation widget to any website with a single `<script>` tag
+- **🐳 Docker support** — Self-hosted Whisper API + local LLM (Ollama) for smart editing
+
+---
 
 ## Quick Start
 
@@ -115,25 +136,27 @@ open VoiceFlow.xcodeproj
 
 The Swift app uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) v1.7.4 via SPM and requires `brew install whisper-cpp`.
 
-## Streaming Mode (Groq API — Free)
+---
 
-VoiceFlow includes optional streaming transcription via [Groq's free Whisper API](https://groq.com):
+## Streaming Mode (Groq API — Free, Optional)
 
-1. Get a free API key at [console.groq.com](https://console.groq.com) (no credit card)
+VoiceFlow includes optional streaming transcription via [Groq's free Whisper API](https://groq.com) for near-instant results (~275ms latency):
+
+1. Get a free API key at [console.groq.com](https://console.groq.com) (no credit card required)
 2. Copy `.env.example` to `.env` and add your key:
    ```
    GROQ_API_KEY=gsk_your_key_here
    ```
-3. Running `npm run tauri dev` auto-loads `GROQ_API_KEY` from the root `.env`. You can also set it via **Settings → Groq API key** in the app — this is saved to `config.json` in your OS app-config directory and persists across restarts.
-4. The key must be set before clicking **"Stream (Groq)"** in the app or using the tray menu.
+3. Running `npm run tauri dev` auto-loads `GROQ_API_KEY` from the root `.env`
+4. Set it via **Settings → Groq API key** in the app — persists across restarts
 
-### What it does
-- Real-time transcription with ~275ms latency via the [Groq Whisper API](https://groq.com)
-- Smart editing: removes filler words, fixes punctuation, auto-capitalizes
+> **Note:** Streaming mode is completely optional. VoiceFlow works perfectly offline without it.
 
-## Browser Demo
+---
 
-The Website folder contains a pure offline dictation page that runs Whisper tiny.en entirely in the browser via WebAssembly — no backend, no API key.
+## Browser Demo (No Installation Required)
+
+Try VoiceFlow directly in your browser — **no download, no install, no account**:
 
 ```bash
 cd Website
@@ -144,9 +167,13 @@ python3 -m http.server 8080 # serve the page
 
 Microphone access requires HTTP(S); it won't work on `file://`.
 
-### Embed on Your Own Site
+The Website demo runs Whisper tiny.en entirely in-browser via **WebAssembly** — zero server calls, full client-side processing.
 
-Host the Website folder on your domain and add:
+---
+
+## Embed Dictation on Your Own Website
+
+Add a floating voice dictation widget to any website with two script tags:
 
 ```html
 <script>
@@ -155,7 +182,11 @@ Host the Website folder on your domain and add:
 <script src="/embed/voiceflow-embed.js" defer></script>
 ```
 
-A floating dictation button appears. It uses the same on-device pipeline and shows a friendly setup message if the model assets aren't hosted alongside it. See **[Website/OFFLINE-STT.md](Website/OFFLINE-STT.md)** for full architecture and privacy details.
+A floating mic button appears. Visitors can click to record, and their voice is transcribed on-device. Shows a friendly setup message if the model assets aren't hosted alongside it. See **[Website/OFFLINE-STT.md](Website/OFFLINE-STT.md)** for full architecture and privacy details.
+
+**Use cases:** Contact forms, blog comments, accessibility tools, customer support chat.
+
+---
 
 ## Architecture
 
@@ -166,14 +197,16 @@ Audio Input (16kHz PCM)
     ↓
 Raw Transcript
     ↓
-[Smart Editor]  ← Filler removal, auto-edits, punctuation
+[Smart Editor]  ← Filler removal, auto-edits, punctuation (via Ollama locally)
     ↓
-Clean, formatted text → Clipboard / Display
+Clean, formatted text → Clipboard / Display / Embed widget
 ```
+
+---
 
 ## Docker — Full Backend Stack & Dev Environment
 
-VoiceFlow ships with a complete Docker setup for **local LLM inference**, a **self-hosted Whisper API** (Groq alternative), and a **reproducible Tauri build environment**. No native Rust or WebKit installs required on the host.
+VoiceFlow ships with a complete Docker setup for **local LLM inference**, a **self-hosted Whisper transcription API** (free alternative to Groq), and a **reproducible Tauri build environment**. No native Rust or WebKit installs required on the host.
 
 ### What's included
 
@@ -203,7 +236,7 @@ VoiceFlow ships with a complete Docker setup for **local LLM inference**, a **se
 
 - **Ollama** → `http://localhost:11434` — runs `phi-3.5-mini:q4_K_M` by default (~4 GB RAM). Swap the model in `docker-compose.yml` build args for `llama3.2:1b` (1 GB) or `mistral:7b` (5 GB). GPU acceleration available via NVIDIA Container Toolkit.
 
-- **Whisper API** → `http://localhost:8081` — drop-in replacement for Groq. Accepts audio files and returns transcribed text with timestamps. Model size controlled by `WHISPER_MODEL` env var (`tiny` | `base` | `small` | `medium` | `large-v3`).
+- **Whisper API** → `http://localhost:8081` — drop-in replacement for Groq. Accepts audio files and returns transcribed text with timestamps. Model size controlled by `WHISPER_MODEL` env var (`tiny` \| `base` \| `small` \| `medium` \| `large-v3`).
 
 - **Dev container** → No exposed ports. Use `docker compose exec dev bash` for an interactive shell, or `docker compose run --rm dev npm run tauri dev` to run the app.
 
@@ -250,9 +283,21 @@ docker compose logs -f ollama
 docker compose logs -f whisper-api
 ```
 
-## Privacy
+---
 
-Offline mode makes zero network requests. Streaming mode sends audio only to Groq's API (no storage). The Website demo enforces a strict CSP and sets `allowRemoteModels = false` to prevent any model fetch from a remote origin.
+## Privacy & Security
+
+VoiceFlow is built with a **privacy-first philosophy**:
+
+- **Offline mode** makes zero network requests — your audio never leaves your machine
+- **Streaming mode** sends audio only to Groq's API (no storage, no logging)
+- **Browser demo** enforces a strict CSP and sets `allowRemoteModels = false` to prevent any remote model fetching
+- **Docker Whisper API** gives you full control — self-host on your own infrastructure
+- **No analytics, no telemetry, no crash reporting** — ever
+
+Your voice data is yours. Always has been. Always will be.
+
+---
 
 ## Project Structure
 
@@ -292,6 +337,39 @@ VoiceFlow/
 └── VoiceFlow.yml                # XcodeGen config
 ```
 
+---
+
+## Frequently Asked Questions (FAQ)
+
+### Is VoiceFlow really free and open source?
+Yes. VoiceFlow is triple-licensed under MIT, Apache 2.0, and GPL v3. You can use, modify, and distribute it freely. No subscriptions, no hidden fees, no API costs for offline mode.
+
+### Does VoiceFlow work without an internet connection?
+Absolutely. The core speech-to-text engine runs Whisper entirely on your device using local models (whisper.cpp / whisper-rs). No network connection needed — not even for model downloads after the initial setup.
+
+### What languages does VoiceFlow support?
+VoiceFlow uses OpenAI's Whisper model, which supports **100+ languages** including English, Spanish, French, German, Japanese, Korean, Chinese, Arabic, Hindi, and many more. The browser demo defaults to English (`whisper-tiny.en`); the desktop app supports multilingual models.
+
+### How accurate is offline Whisper compared to cloud STT?
+Whisper base model achieves ~95% word accuracy on clean English audio. The `small` and `medium` models are even more accurate. While cloud services like Google dictation may edge it out on accented speech, VoiceFlow's accuracy is competitive for most use cases — and you trade a small accuracy gain for total privacy.
+
+### Can I use VoiceFlow commercially?
+Yes. The MIT and Apache 2.0 license options allow commercial use with no restrictions (MIT) or with patent protection (Apache 2.0). Only GPL v3 requires derivative works to also be open source.
+
+### How is VoiceFlow different from Whisper.cpp or other Whisper projects?
+Unlike raw Whisper.cpp (which is a library), VoiceFlow is a **complete polished application** with a beautiful UI, global shortcuts, system tray integration, smart text editing (filler removal, punctuation), streaming mode, and an embeddable web widget — all wrapped in a cross-platform desktop app.
+
+### Can I self-host the Whisper API?
+Yes! VoiceFlow includes a complete Docker setup with a self-hosted Whisper API (`whisper-api` service on port 8081). You can replace Groq with your own server, giving you full control over your transcription pipeline.
+
+### What are the system requirements?
+- **RAM:** 4GB minimum (8GB recommended for larger Whisper models)
+- **CPU:** Any modern CPU (ARM64/M-series Macs get native acceleration)
+- **GPU:** Optional — NVIDIA CUDA supported in Docker mode
+- **Storage:** ~141MB for base model, ~464MB for medium, ~1.5GB for large
+
+---
+
 ## License
 
 This project is triple-licensed under your choice of:
@@ -306,4 +384,14 @@ You may choose to use, distribute, and/or modify this software under any one (or
 
 ---
 
-Kenneth Aman
+## Star This Repo ⭐
+
+If VoiceFlow saves you time or respects your privacy, give it a star — it helps others discover it!
+
+[![GitHub stars](https://img.shields.io/github/stars/kennethaman0891/VoiceFlow?style=social)](https://github.com/kennethaman0891/VoiceFlow/stargazers)
+
+---
+
+<p align="center">
+  <strong>Built with ❤️ by <a href="https://github.com/kennethaman0891">Kenneth Aman</a> · Privacy-first · Open source · No clouds harmed</strong>
+</p>
