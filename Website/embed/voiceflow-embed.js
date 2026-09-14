@@ -130,7 +130,12 @@
   // Header
   var head = document.createElement('div');
   head.id = 'vf-head';
-  var mark = svg('<svg viewBox="0 0 26 26" width="26" height="26" aria-hidden="true"><defs><linearGradient id="vfEmbedGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6D8BFF"/><stop offset="52%" stop-color="#A56BFF"/><stop offset="100%" stop-color="#59D6C6"/></linearGradient></defs><rect x="0.5" y="0.5" width="25" height="25" rx="7.5" fill="url(#vfEmbedGrad)"/><path d="M4 15 C 7 9, 10 9, 13 13 S 19 17, 22 10.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" opacity="0.95"/></svg>');
+  var mark = document.createElement('img');
+  mark.src = '../logo.png';
+  mark.alt = '';
+  mark.width = 26;
+  mark.height = 26;
+  mark.setAttribute('aria-hidden', 'true');
   var headText = document.createElement('div');
   var h4 = document.createElement('h4'); h4.textContent = CFG.title;
   var sub = document.createElement('p'); sub.textContent = CFG.subtitle;
