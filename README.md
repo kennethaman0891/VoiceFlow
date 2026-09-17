@@ -173,14 +173,6 @@ The Website demo runs Whisper tiny.en entirely in-browser via **WebAssembly** �
 
 VoiceFlow ships with a complete Docker setup for **local LLM inference**, a **self-hosted Whisper transcription API** (free alternative to Groq), and a **reproducible Tauri build environment**. No native Rust or WebKit installs required on the host.
 
-### What's included
-
-| Service | Image | Purpose |
-|---------|-------|---------|
-| `ollama` | `voiceflow/ollama` | Local LLM server (phi-3.5-mini) for smart editing, punctuation, filler removal |
-| `whisper-api` | `voiceflow/whisper-api` | Self-hosted Whisper transcription endpoint (`POST /transcribe`) |
-| `dev` | `voiceflow/dev` | Tauri build environment — Rust + Node + WebKit deps, all pre-installed |
-
 ### Quick start
 
 ```bash
@@ -197,57 +189,6 @@ VoiceFlow ships with a complete Docker setup for **local LLM inference**, a **se
 ./scripts/build-tauri.sh
 ```
 
-### Services
-
-- **Ollama** → `http://localhost:11434` — runs `phi-3.5-mini:q4_K_M` by default (~4 GB RAM). Swap the model in `docker-compose.yml` build args for `llama3.2:1b` (1 GB) or `mistral:7b` (5 GB). GPU acceleration available via NVIDIA Container Toolkit.
-
-- **Whisper API** → `http://localhost:8081` — drop-in replacement for Groq. Accepts audio files and returns transcribed text with timestamps. Model size controlled by `WHISPER_MODEL` env var (`tiny` \| `base` \| `small` \| `medium` \| `large-v3`).
-
-- **Dev container** → No exposed ports. Use `docker compose exec dev bash` for an interactive shell, or `docker compose run --rm dev npm run tauri dev` to run the app.
-
-### Architecture in Docker
-
-```
-┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│  Tauri App      │─────▶│  ollama:11434     │      │  whisper-api    │
-│  (native or     │      │  phi-3.5-mini    │      │  :8081          │
-│   in dev ctr)   │      │  (editing layer) │      │  (STT fallback) │
-└─────────────────┘      └──────────────────┘      └─────────────────┘
-       │                         ▲                          ▲
-       │ audio                   │ raw transcript           │ audio file
-       ▼                         │ (punctuated, edited)     │
-┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│  Microphone     │      │  Named volumes   │      │  Named volume   │
-│  (16 kHz PCM)   │      │  (models persist)│      │  (model cache)  │
-└─────────────────┘      └──────────────────┘      └─────────────────┘
-```
-
-All models are persisted in named Docker volumes — rebuilding containers never re-downloads weights.
-
-### GPU support (optional)
-
-On machines with NVIDIA GPUs, uncomment the `deploy` block in `docker-compose.yml` under the `ollama` service and ensure the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) is installed. The Whisper API service also supports `WHISPER_DEVICE=cuda`.
-
-### Docker Compose commands
-
-```bash
-# Start backend services only (Ollama + Whisper API)
-docker compose up -d
-
-# Full stack including dev shell
-docker compose up -d ollama whisper-api dev
-
-# Stop everything (keeps data volumes)
-docker compose down
-
-# Rebuild all images from scratch
-docker compose build --pull
-
-# View logs
-docker compose logs -f ollama
-docker compose logs -f whisper-api
-```
-
 ---
 
 ## Privacy & Security
@@ -261,77 +202,6 @@ VoiceFlow is built with a **privacy-first philosophy**:
 - **No analytics, no telemetry, no crash reporting** — ever
 
 Your voice data is yours. Always has been. Always will be.
-
----
-
-## Project Structure
-
-```
-VoiceFlow/
-├── VoiceFlow/                 # macOS native app (Swift 6 · whisper.cpp)
-│   ├── Sources/App/           # SwiftUI views (VoiceFlowApp, VoiceAgentView, etc.)
-│   ├── Sources/Audio/         # AudioCaptureEngine (AVAudioRecorder)
-│   ├── Sources/Core/          # AppState, AppSettings, DictationCoordinator, PermissionManager
-│   ├── Sources/Speech/        # WhisperEngine, TextPostProcessor, ModelManager
-│   └── Resources/             # Assets, xcassets
-├── Website/                   # Browser demo (Transformers.js · ONNX WebAssembly)
-│   ├── index.html + css/style.css
-│   ├── js/voice-agent.js      # Offline dictation engine
-│   ├── js/vendor/             # Transformers.js + ONNX WASM (populated by setup)
-│   ├── models/whisper-tiny.en/  # Local Whisper model (populated by setup)
-│   ├── embed/voiceflow-embed.js # Floating dictation widget
-│   ├── setup-offline-stt.sh   # One-time setup script
-│   └── OFFLINE-STT.md         # Architecture & privacy details
-├── tauri-app/                 # Cross-platform desktop app (Tauri v2 · Rust)
-│   ├── src/main.ts            # Frontend: recording, streaming, tray UI
-│   └── src-tauri/src/         # Backend: audio.rs, whisper.rs, whisperflow.rs, editor.rs
-│       ├── models/ggml-base.bin  # Whisper base model (~141MB)
-│       └── tauri.conf.json    # App manifest
-├── scripts/                     # Setup, Docker, and build helpers
-│   ├── setup.sh & setup.ps1     # Cross-platform one-time setup
-│   ├── docker-up.sh             # Docker quick-launch manager
-│   └── build-tauri.sh           # Build Tauri app inside Docker container
-├── docker/                      # Production Docker stack
-│   ├── ollama/Dockerfile        # Local LLM server (phi-3.5-mini) for smart editing
-│   ├── whisper-api/             # Self-hosted Whisper transcription API
-│   │   ├── Dockerfile
-│   │   └── app.py               # FastAPI + openai-whisper endpoint
-│   └── dev/Dockerfile           # Tauri build env (Rust + Node + WebKit pre-installed)
-├── docker-compose.yml           # Orchestrates ollama + whisper-api + dev
-├── .dockerignore                # Excludes build artifacts from images
-└── VoiceFlow.yml                # XcodeGen config
-```
-
----
-
-## Frequently Asked Questions (FAQ)
-
-### Is VoiceFlow really free and open source?
-Yes. VoiceFlow is triple-licensed under MIT, Apache 2.0, and GPL v3. You can use, modify, and distribute it freely. No subscriptions, no hidden fees, no API costs for offline mode.
-
-### Does VoiceFlow work without an internet connection?
-Absolutely. The core speech-to-text engine runs Whisper entirely on your device using local models (whisper.cpp / whisper-rs). No network connection needed — not even for model downloads after the initial setup.
-
-### What languages does VoiceFlow support?
-VoiceFlow uses OpenAI's Whisper model, which supports **100+ languages** including English, Spanish, French, German, Japanese, Korean, Chinese, Arabic, Hindi, and many more. The browser demo defaults to English (`whisper-tiny.en`); the desktop app supports multilingual models.
-
-### How accurate is offline Whisper compared to cloud STT?
-Whisper base model achieves ~95% word accuracy on clean English audio. The `small` and `medium` models are even more accurate. While cloud services like Google dictation may edge it out on accented speech, VoiceFlow's accuracy is competitive for most use cases — and you trade a small accuracy gain for total privacy.
-
-### Can I use VoiceFlow commercially?
-Yes. The MIT and Apache 2.0 license options allow commercial use with no restrictions (MIT) or with patent protection (Apache 2.0). Only GPL v3 requires derivative works to also be open source.
-
-### How is VoiceFlow different from Whisper.cpp or other Whisper projects?
-Unlike raw Whisper.cpp (which is a library), VoiceFlow is a **complete polished application** with a beautiful UI, global shortcuts, system tray integration, smart text editing (filler removal, punctuation), streaming mode, and an embeddable web widget — all wrapped in a cross-platform desktop app.
-
-### Can I self-host the Whisper API?
-Yes! VoiceFlow includes a complete Docker setup with a self-hosted Whisper API (`whisper-api` service on port 8081). You can replace Groq with your own server, giving you full control over your transcription pipeline.
-
-### What are the system requirements?
-- **RAM:** 4GB minimum (8GB recommended for larger Whisper models)
-- **CPU:** Any modern CPU (ARM64/M-series Macs get native acceleration)
-- **GPU:** Optional — NVIDIA CUDA supported in Docker mode
-- **Storage:** ~141MB for base model, ~464MB for medium, ~1.5GB for large
 
 ---
 
