@@ -30,53 +30,19 @@
 
 ## Quick Start
 
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://rustup.rs/) (latest stable)
-
 ```bash
-# macOS
-brew install pkg-config cmake && xcode-select --install
+# Install deps (macOS)
+brew install pkg-config cmake
 
-# Windows — install Build Tools with "Desktop development with C++"
-# https://visualstudio.microsoft.com/visual-cpp-build-tools/
+# Build & run the desktop app
+cd tauri-app && npm install
+npm run tauri dev
 
-# Linux (Ubuntu/Debian)
-sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+# Or serve the browser demo
+cd Website && ./setup-offline-stt.sh && python3 -m http.server 8080
 ```
 
-### Desktop App
-
-```bash
-cd tauri-app
-npm install                          # one-time setup
-mkdir -p src-tauri/models
-curl -L -o src-tauri/models/ggml-base.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-
-npm run tauri dev    # development
-npm run tauri build  # production (.app/.dmg/.exe/.deb)
-```
-
-### Swift macOS App
-
-```bash
-brew install xcodegen
-xcodegen generate
-open VoiceFlow.xcodeproj
-```
-
-### Browser Demo
-
-```bash
-cd Website
-./setup-offline-stt.sh      # downloads ~40 MB of runtime + model
-python3 -m http.server 8080
-# open http://localhost:8080
-```
-
-See [tauri-app/README.md](tauri-app/README.md) and [Website/OFFLINE-STT.md](Website/OFFLINE-STT.md) for full details.
+See [tauri-app/README.md](tauri-app/README.md) and [Website/OFFLINE-STT.md](Website/OFFLINE-STT.md) for full platform setup.
 
 ---
 
@@ -88,7 +54,7 @@ docker compose up -d            # or manual compose
 ./scripts/build-tauri.sh        # Build desktop app in container
 ```
 
-Services: Ollama `:11434` (smart editing), Whisper API `:8081` (transcription). All models persist in named volumes. GPU support available via NVIDIA Container Toolkit.
+Services: Ollama `:11434` (smart editing), Whisper API `:8081` (transcription). All models persist in named volumes.
 
 ---
 
