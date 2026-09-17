@@ -6,7 +6,7 @@
 
 **Privacy-first offline speech-to-text & voice dictation for macOS, Windows & Linux.** Runs Whisper entirely on-device — no cloud, no API keys, no telemetry.
 
-[**Download**](#quick-start) · [**Browser Demo**](#browser-demo) · [**Embed Widget**](#embed-on-your-own-site) · [**Docker Setup**](#docker--full-backend-stack--dev-environment) · [**GitHub**](https://github.com/kennethaman0891/VoiceFlow)
+[**Download**](#quick-start) · [**Browser Demo**](#browser-demo) · [**Docker Setup**](#docker--full-backend-stack--dev-environment) · [**GitHub**](https://github.com/kennethaman0891/VoiceFlow)
 
 </div>
 
@@ -32,7 +32,6 @@ Built for **developers, writers, journalists, and privacy-conscious users** who 
 | 🔑 **API Keys** | ✅ None required | ❌ Required |
 | 🖥️ **Platforms** | ✅ macOS, Windows, Linux + Web | ⚠️ Limited |
 | 📦 **Self-hosted API** | ✅ Docker setup included | ❌ Not available |
-| 🔌 **Embed widget** | ✅ Add to any website | ❌ Rare |
 | ⌨️ **Global shortcut** | ✅ Dictate from anywhere | ⚠️ App-dependent |
 
 ---
@@ -59,7 +58,6 @@ Built for **developers, writers, journalists, and privacy-conscious users** who 
 - **✨ Smart editing** — Automatic filler-word removal (um, uh, like), punctuation restoration, and text formatting
 - **🎙️ Mini widget** — Floating mic icon for quick one-tap recording from anywhere on screen
 - **🌑 Dark premium UI** — Cyan/indigo accent with recording glow animations
-- **🔗 Embedded dictation** — Add a floating dictation widget to any website with a single `<script>` tag
 - **🐳 Docker support** — Self-hosted Whisper API + local LLM (Ollama) for smart editing
 
 ---
@@ -168,39 +166,6 @@ python3 -m http.server 8080 # serve the page
 Microphone access requires HTTP(S); it won't work on `file://`.
 
 The Website demo runs Whisper tiny.en entirely in-browser via **WebAssembly** — zero server calls, full client-side processing.
-
----
-
-## Embed Dictation on Your Own Website
-
-Add a floating voice dictation widget to any website with two script tags:
-
-```html
-<script>
-  window.VOICEFLOW_CONFIG = { position: "bottom-right", title: "Dictate", theme: "auto" };
-</script>
-<script src="/embed/voiceflow-embed.js" defer></script>
-```
-
-A floating mic button appears. Visitors can click to record, and their voice is transcribed on-device. Shows a friendly setup message if the model assets aren't hosted alongside it. See **[Website/OFFLINE-STT.md](Website/OFFLINE-STT.md)** for full architecture and privacy details.
-
-**Use cases:** Contact forms, blog comments, accessibility tools, customer support chat.
-
----
-
-## Architecture
-
-```
-Audio Input (16kHz PCM)
-    ↓
-[Whisper STT]  ← Local (whisper-rs / whisper.cpp) or Groq API
-    ↓
-Raw Transcript
-    ↓
-[Smart Editor]  ← Filler removal, auto-edits, punctuation (via Ollama locally)
-    ↓
-Clean, formatted text → Clipboard / Display / Embed widget
-```
 
 ---
 
