@@ -6,13 +6,7 @@ struct MeetingListView: View {
     @StateObject private var history = MeetingHistory.shared
     @State private var searchText = ""
     @State private var selectedMeeting: SavedMeeting?
-
-    var filteredMeetings: [SavedMeeting] {
-        if searchText.isEmpty {
-            return history.meetings
-        }
-        return history.search(searchText)
-    }
+    @State private var filteredMeetings: [SavedMeeting] = []
 
     var body: some View {
         NavigationSplitView {
@@ -56,8 +50,18 @@ struct MeetingListView: View {
                 )
             }
         }
-        .task {
-            await history.refresh()
+        .onAppear {
+            filteredMeetings = history.meetings
+        }
+        .onChange(of: searchText) { _, newValue in
+            Task {
+                filteredMeetings = await history.search(newValue)
+            }
+        }
+        .onChange(of: history.meetings) { _, _ in
+            if searchText.isEmpty {
+                filteredMeetings = history.meetings
+            }
         }
     }
 }

@@ -1,8 +1,11 @@
 import Foundation
+import AppKit
+import EventKit
 
 // MARK: - MeetingDetector
 
 /// Detects when a meeting is likely taking place based on heuristics.
+@MainActor
 final class MeetingDetector {
     static let shared = MeetingDetector()
 
@@ -61,7 +64,6 @@ final class MeetingDetector {
     // MARK: - Private
 
     private func calendarMeetingName() -> String? {
-        let calendar = Calendar.current
         let now = Date()
         let oneHourAgo = now.addingTimeInterval(-3600)
 

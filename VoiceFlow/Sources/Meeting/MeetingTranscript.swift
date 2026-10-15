@@ -20,8 +20,8 @@ struct TranscriptSegment: Identifiable, Codable, Equatable {
     let id: UUID
     let timestamp: Date
     let formattedTimestamp: String
-    let speaker: SpeakerLabel
-    let text: String
+    var speaker: SpeakerLabel
+    var text: String
     let duration: TimeInterval
 
     init(id: UUID = UUID(), timestamp: Date = Date(), formattedTimestamp: String? = nil, speaker: SpeakerLabel, text: String, duration: TimeInterval) {
@@ -50,13 +50,13 @@ struct TranscriptSegment: Identifiable, Codable, Equatable {
 final class MeetingTranscript: ObservableObject, Identifiable, Codable {
     let sessionID: UUID
     let meetingName: String
-    let startDate: Date
+    var startDate: Date
     @Published var segments: [TranscriptSegment] = []
     @Published var notes: String = ""
     @Published var summary: String?
     @Published var isComplete: Bool = false
 
-    private enum CodingKeys: CodingKey {
+    private enum CodingKeys: String, CodingKey {
         case sessionID, meetingName, startDate, segments, notes, summary, isComplete
     }
 
@@ -66,14 +66,50 @@ final class MeetingTranscript: ObservableObject, Identifiable, Codable {
         self.startDate = Date()
     }
 
+    init(meetingName: String, startDate: Date) {
+        self.sessionID = UUID()
+        self.meetingName = meetingName
+        self.startDate = startDate
+    }
+
+    // Custom Codable implementation to handle @Published properties
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        meetingName = try container.decode(String.self, forKey: .meetingName)
+        startDate = try container.decode(Date.self, forKey: .startDate)
+        segments = try container.decode([TranscriptSegment].self, forKey: .segments)
+        notes = try container.decode(String.self, forKey: .notes)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        isComplete = try container.decode(Bool.self, forKey: .isComplete)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionID, forKey: .sessionID)
+        try container.encode(meetingName, forKey: .meetingName)
+        try container.encode(startDate, forKey: .startDate)
+        try container.encode(segments, forKey: .segments)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(summary, forKey: .summary)
+        try container.encode(isComplete, forKey: .isComplete)
+    }
+
     func addSegment(_ segment: TranscriptSegment) {
         segments.append(segment)
     }
 
     func appendToLastSegment(_ text: String) {
-        if var last = segments.popLast() {
-            last.text += " " + text
-            segments.append(last)
+        if let last = segments.popLast() {
+            let updatedSegment = TranscriptSegment(
+                id: last.id,
+                timestamp: last.timestamp,
+                formattedTimestamp: last.formattedTimestamp,
+                speaker: last.speaker,
+                text: last.text + " " + text,
+                duration: last.duration
+            )
+            segments.append(updatedSegment)
         } else {
             segments.append(TranscriptSegment(speaker: .me, text: text, duration: 0))
         }

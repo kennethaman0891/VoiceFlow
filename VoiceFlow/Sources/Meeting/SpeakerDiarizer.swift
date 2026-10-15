@@ -1,5 +1,9 @@
 import Foundation
 import Accelerate
+import SwiftUI
+
+// Import MeetingTranscript from the same module
+// (Assuming same module, otherwise add import)
 
 // MARK: - SpeakerSegment
 

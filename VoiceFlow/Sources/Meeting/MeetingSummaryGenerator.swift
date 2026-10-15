@@ -125,7 +125,8 @@ final class MeetingSummaryGenerator {
     /// Fallback summary when LLM is unavailable - extracts key info from transcript.
     private func generateFallbackSummary(for transcript: MeetingTranscript, fullText: String) -> String {
         var summary = "## Summary\n\n"
-        summary += "**Participants:** \(transcript.segments.map { $0.speaker.displayName }.unique().joined(separator: ", "))\n\n"
+        let participants = Array(Set(transcript.segments.map { $0.speaker.displayName }))
+        summary += "**Participants:** \(participants.joined(separator: ", "))\n\n"
 
         // Extract potential action items
         let actionItems = extractActionItems(from: fullText)

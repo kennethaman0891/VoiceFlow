@@ -15,6 +15,17 @@ struct PhysicalKey: Hashable, Equatable {
         self.displayName = Self.keyName(for: keyCode)
     }
 
+    // Common key shortcuts
+    static let control = PhysicalKey(keyCode: 59) // Left Control
+    static let v = PhysicalKey(keyCode: 9)        // V key
+    static let space = PhysicalKey(keyCode: 49)   // Space
+    static let escape = PhysicalKey(keyCode: 53)  // Escape
+    static let enter = PhysicalKey(keyCode: 36)   // Enter/Return
+    static let tab = PhysicalKey(keyCode: 48)     // Tab
+    static let shift = PhysicalKey(keyCode: 56)   // Left Shift
+    static let command = PhysicalKey(keyCode: 55) // Left Command
+    static let option = PhysicalKey(keyCode: 58)  // Left Option
+
     var isModifierKey: Bool {
         modifierMaskRawValue != nil
     }
@@ -35,9 +46,24 @@ struct PhysicalKey: Hashable, Equatable {
         }
     }
 
+    fileprivate var modifierMaskRawValueForCallback: UInt64? {
+        return modifierMaskRawValue
+    }
+
     private static func keyName(for keyCode: UInt16) -> String {
-        guard let cfString = CGKeyCodeToAppleKeymapKeyCodeString(keyCode) else { return "Key\(keyCode)" }
-        return cfString as String
+        // Try to get the localized key name
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(keyCode), keyDown: true) else {
+            return "Key\(keyCode)"
+        }
+        // Use keyboardGetUnicodeString to get the key name
+        var buffer = [UniChar](repeating: 0, count: 4)
+        var actualLength: CFIndex = 0
+        event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &actualLength, unicodeString: &buffer)
+        if actualLength > 0 {
+            return String(utf16CodeUnits: buffer, count: Int(actualLength))
+        }
+        return "Key\(keyCode)"
     }
 }
 
@@ -67,12 +93,61 @@ enum ChordAction: String, CaseIterable {
     case toggleTalk = "toggle-to-talk"
 }
 
+// MARK: - EventSnapshot
+
+private struct EventSnapshot {
+    let type: CGEventType
+    let key: PhysicalKey
+    let flags: CGEventFlags
+}
+
+private extension EventSnapshot {
+    init?(type: CGEventType, event: CGEvent) {
+        switch type {
+        case .flagsChanged, .keyDown, .keyUp:
+            self.init(
+                type: type,
+                key: PhysicalKey(keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode))),
+                flags: event.flags
+            )
+        default:
+            return nil
+        }
+    }
+}
+
+// MARK: - C Callback
+
+// Global callback function that can be passed as a C function pointer
+@_cdecl("hotkeyCallback")
+func hotkeyCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    guard let userInfo else { return Unmanaged.passUnretained(event) }
+
+    // Re-enable tap if disabled by system
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+        if let tap = monitor.eventTap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+    monitor.handleEvent(type, event: event)
+    return Unmanaged.passUnretained(event)
+}
+
 // MARK: - HotkeyMonitor
 
 protocol HotkeyMonitoring: AnyObject {
-    var onRecordingStart: (() -> Void)? { get set }
-    var onRecordingStop: (() -> Void)? { get set }
-    var onRecordingRestart: (() -> Void)? { get set }
+    var onRecordingStart: (@Sendable () -> Void)? { get set }
+    var onRecordingStop: (@Sendable () -> Void)? { get set }
+    var onRecordingRestart: (@Sendable () -> Void)? { get set }
 
     func start() -> Bool
     func stop()
@@ -81,17 +156,17 @@ protocol HotkeyMonitoring: AnyObject {
 
 /// Monitors configured key chords for hold-to-talk using a CGEvent tap.
 /// Requires Accessibility permission to create the event tap.
-final class HotkeyMonitor: NSObject, HotkeyMonitoring {
+final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
 
     // MARK: - Callbacks
 
-    var onRecordingStart: (() -> Void)?
-    var onRecordingStop: (() -> Void)?
-    var onRecordingRestart: (() -> Void)?
+    var onRecordingStart: (@Sendable () -> Void)?
+    var onRecordingStop: (@Sendable () -> Void)?
+    var onRecordingRestart: (@Sendable () -> Void)?
 
     // MARK: - State
 
-    private var eventTap: CFMachPort?
+    fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var eventThread: Thread?
     private var bindings: [ChordAction: KeyChord]
@@ -119,7 +194,7 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring {
 
         guard eventTap == nil else { return true }
 
-        let thread = Thread { [weak self] in
+        let thread = Thread { @Sendable [weak self] in
             guard let self else { return }
             self.runEventLoop()
         }
@@ -190,7 +265,7 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring {
         RunLoop.current.run()
     }
 
-    private func handleEvent(_ type: CGEventType, event: CGEvent) {
+    internal func handleEvent(_ type: CGEventType, event: CGEvent) {
         guard let snapshot = EventSnapshot(type: type, event: event) else { return }
 
         stateLock.lock()
@@ -211,23 +286,27 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring {
 
     private func processKeyEvent(_ key: PhysicalKey, pressedKeys: Set<PhysicalKey>, type: CGEventType) {
         // Check if this key is part of any binding
-        for (action, chord) in bindings {
+        for (_, chord) in bindings {
             let isPartOfChord = chord.keys.contains(key)
             let allKeysPressed = chord.keys.isSubset(of: pressedKeys)
 
             switch type {
             case .keyDown:
                 if isPartOfChord && allKeysPressed {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.onRecordingStart?()
+                    let callback = onRecordingStart
+                    if let callback {
+                        DispatchQueue.main.async {
+                            callback()
+                        }
                     }
                 }
             case .keyUp:
                 if isPartOfChord && !allKeysPressed {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.onRecordingStop?()
+                    let callback = onRecordingStop
+                    if let callback {
+                        DispatchQueue.main.async {
+                            callback()
+                        }
                     }
                 }
             default:
@@ -242,7 +321,7 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring {
         // Check modifier keys
         let flags = CGEventSource.flagsState(.combinedSessionState)
         for monitoredKey in monitoredKeys where monitoredKey.isModifierKey {
-            if let mask = monitoredKey.modifierMaskRawValue,
+            if let mask = monitoredKey.modifierMaskRawValueForCallback,
                flags.rawValue & mask == mask {
                 keys.insert(monitoredKey)
             }
@@ -257,63 +336,4 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring {
 
         return keys
     }
-
-    // MARK: - C Callback
-
-    @private static func hotkeyCallback(
-        proxy: CGEventTapProxy,
-        type: CGEventType,
-        event: CGEvent,
-        userInfo: UnsafeMutableRawPointer?
-    ) -> Unmanaged<CGEvent>? {
-        guard let userInfo else { return Unmanaged.passUnretained(event) }
-
-        // Re-enable tap if disabled by system
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            if let tap = monitor.eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
-        let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-        monitor.handleEvent(type, event: event)
-        return Unmanaged.passUnretained(event)
-    }
-}
-
-// MARK: - EventSnapshot
-
-private extension HotkeyMonitor {
-    struct EventSnapshot {
-        let type: CGEventType
-        let key: PhysicalKey
-        let flags: CGEventFlags
-    }
-}
-
-private extension HotkeyMonitor.EventSnapshot {
-    init?(type: CGEventType, event: CGEvent) {
-        switch type {
-        case .flagsChanged, .keyDown, .keyUp:
-            self.init(
-                type: type,
-                key: PhysicalKey(keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode))),
-                flags: event.flags
-            )
-        default:
-            return nil
-        }
-    }
-}
-
-// MARK: - Key Code Helper
-
-private func CGKeyCodeToAppleKeymapKeyCodeString(_ keyCode: UInt16) -> CFString? {
-    let source = CGEventSource(stateID: .hidSystemState)
-    guard let event = CGEvent(keyboardEventKeyboardType: 1, key: keyCode) else {
-        return nil
-    }
-    return event.characters
 }

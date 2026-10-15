@@ -14,7 +14,7 @@ final class MeetingManager: ObservableObject {
 
     private let history = MeetingHistory.shared
 
-    private init() {}
+    init() {}
 
     // MARK: - Public API
 

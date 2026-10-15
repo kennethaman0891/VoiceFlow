@@ -1,8 +1,11 @@
 import Foundation
 
+// CleanupMode is defined in TextCleanupManager.swift in the same module
+
 // MARK: - CleanupPromptBuilder
 
 /// Builds prompts for different cleanup operations.
+@MainActor
 final class CleanupPromptBuilder {
     static let shared = CleanupPromptBuilder()
 

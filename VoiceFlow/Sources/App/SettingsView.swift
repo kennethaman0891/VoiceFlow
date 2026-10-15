@@ -69,7 +69,7 @@ struct SettingsView: View {
 
                 // Cleanup Settings
                 SettingsSection(title: "Text Cleanup", icon: "wand.and.stars") {
-                    Picker("Cleanup Mode", selection: /* TODO: bind to settings */ .constant(.fillers)) {
+                    Picker("Cleanup Mode", selection: .constant(CleanupMode.fillers)) {
                         ForEach(CleanupMode.allCases, id: \.self) { mode in
                             Text(mode.rawValue).tag(mode)
                         }

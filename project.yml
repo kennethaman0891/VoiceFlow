@@ -1,0 +1,40 @@
+name: VoiceFlow
+targets:
+  VoiceFlow:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: VoiceFlow/Sources
+    resources:
+      - path: VoiceFlow/Resources
+      - path: Website
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        INFOPLIST_FILE: VoiceFlow/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+        OTHER_SWIFT_FLAGS: -DDEBUG
+        HEADER_SEARCH_PATHS: ["/opt/homebrew/include", "/opt/homebrew/Cellar/ggml/0.21.0/include"]
+        LIBRARY_SEARCH_PATHS: ["/opt/homebrew/Cellar/whisper-cpp/1.9.2/lib", "/opt/homebrew/Cellar/ggml/0.21.0/lib"]
+        OTHER_LDFLAGS: "-lwhisper -lggml -lggml-base"
+      debug:
+        GCC_OPTIMIZATION_LEVEL: 0
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      release:
+        GCC_OPTIMIZATION_LEVEL: s
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
+    dependencies:
+      - package: whisper
+        product: whisper
+packages:
+  whisper:
+    url: https://github.com/ggml-org/whisper.cpp
+    version: 1.7.4
+    products:
+      - name: whisper
+        type: library

@@ -1,5 +1,6 @@
 import Foundation
-import CoreData
+import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - ExportFormat
 
@@ -24,7 +25,8 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 // MARK: - MeetingExporter
 
 /// Exports meeting transcripts to various formats.
-final class MeetingExporter {
+@MainActor
+final class MeetingExporter: ObservableObject {
     static let shared = MeetingExporter()
 
     private init() {}
@@ -41,11 +43,8 @@ final class MeetingExporter {
         case .text:
             content = extractPlainText(from: transcript)
         case .json:
-            content = try JSONEncoder().encode(transcript)
-                .utf8CString
-                .withUnsafeBufferPointer { ptr in
-                    String(cString: ptr.baseAddress!)
-                }
+            let data = try JSONEncoder().encode(transcript)
+            content = String(decoding: data, as: UTF8.self)
         case .pdf:
             content = transcript.formattedOutput
         }
@@ -112,17 +111,20 @@ final class MeetingExporter {
     }
 
     private func convertToPDF(at fileURL: URL) async throws -> URL {
-        // In production, use WKWebView or UIKit to render HTML to PDF
+        // In production, use WKWebView or AppKit to render HTML to PDF
         // For now, return the markdown file (users can convert manually)
         return fileURL
     }
 
     private func showShareSheet(items: [Any]) {
         guard let firstItem = items.first else { return }
-        let controller = UIActivityViewController(activityItems: [firstItem], applicationActivities: nil)
-        // Present on main window
-        if let window = NSApp.windows.first {
-            window.makeKeyAndOrderFront(nil)
+
+        // Use NSSharingServicePicker for macOS
+        if let sharingItem = firstItem as? URL {
+            let picker = NSSharingServicePicker(items: [sharingItem])
+            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                picker.show(relativeTo: .zero, of: window.contentView!, preferredEdge: .minY)
+            }
         }
     }
 }

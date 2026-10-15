@@ -7,6 +7,8 @@ import CoreGraphics
 enum PasteResult: Equatable {
     case pasted
     case copiedToClipboard
+    case cancelled
+    case clipboardError(String)
 }
 
 // MARK: - TextPaster
@@ -14,19 +16,27 @@ enum PasteResult: Equatable {
 /// Pastes transcribed text into the focused text field by simulating Cmd+V.
 /// Saves and restores the clipboard around the paste operation to avoid clobbering user data.
 /// Requires Accessibility permission for CGEvent posting.
-final class TextPaster {
+/// Includes clipboard safety: confirmation for large content, auto-clear timeout.
+final class TextPaster: @unchecked Sendable {
 
     struct PasteSession {
         let targetApplication: PasteTargetApplication?
         let originalClipboard: String?
         let timestamp: Date
+        let textLength: Int
     }
 
     var onPaste: ((PasteSession) -> Void)?
     var onPasteStart: (() -> Void)?
     var onPasteEnd: (() -> Void)?
 
-    // MARK: - Timing Constants
+    // MARK: - Configuration
+
+    /// Maximum text length before prompting for confirmation (characters).
+    static let confirmationThreshold: Int = 10_000
+
+    /// Auto-clear clipboard after this delay (seconds).
+    static let clipboardAutoClearDelay: TimeInterval = 60.0
 
     /// Delay after writing text to clipboard before simulating Cmd+V.
     static let preKeystrokeDelay: TimeInterval = 0.05
@@ -48,12 +58,38 @@ final class TextPaster {
         var id: String { bundleIdentifier }
     }
 
+    // MARK: - Auto-clear Timer
+
+    private var clipboardRestoreTimer: Timer?
+    private var originalClipboardContent: ClipboardState?
+
     // MARK: - Public API
 
     /// Paste the given text into the currently focused text field.
     /// Returns the result of the paste operation.
-    func paste(_ text: String, delay: TimeInterval? = nil) async -> PasteResult {
+    /// For large text (> confirmationThreshold), copies to clipboard only and requires user confirmation.
+    func paste(_ text: String, delay: TimeInterval? = nil, requireConfirmationForLargeText: Bool = true) async -> PasteResult {
         guard let targetApp = frontmostApplication() else {
+            return .copiedToClipboard
+        }
+
+        // Check if confirmation needed for large text
+        if requireConfirmationForLargeText && text.count > Self.confirmationThreshold {
+            // Copy to clipboard only, don't auto-paste
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            
+            // Schedule auto-clear
+            scheduleClipboardAutoClear()
+            
+            let session = PasteSession(
+                targetApplication: targetApp,
+                originalClipboard: nil,
+                timestamp: Date(),
+                textLength: text.count
+            )
+            onPaste?(session)
+            
             return .copiedToClipboard
         }
 
@@ -79,13 +115,36 @@ final class TextPaster {
 
         let session = PasteSession(
             targetApplication: targetApp,
-            originalClipboard: originalClipboard,
-            timestamp: Date()
+            originalClipboard: originalClipboard.stringValue,
+            timestamp: Date(),
+            textLength: text.count
         )
         onPaste?(session)
         onPasteEnd?()
 
         return .pasted
+    }
+
+    /// Explicitly confirm and paste large text that was previously copied to clipboard.
+    func confirmAndPasteLargeText() async -> PasteResult {
+        // The text is already in clipboard, just simulate Cmd+V
+        onPasteStart?()
+        try? await Task.sleep(nanoseconds: UInt64(Self.preKeystrokeDelay * 1_000_000_000))
+        simulatePaste()
+        try? await Task.sleep(nanoseconds: UInt64(Self.postKeystrokeDelay * 1_000_000_000))
+        
+        // Clear clipboard after confirmed paste
+        NSPasteboard.general.clearContents()
+        cancelClipboardAutoClear()
+        
+        onPasteEnd?()
+        return .pasted
+    }
+
+    /// Cancel pending large-text paste and clear clipboard.
+    func cancelLargeTextPaste() {
+        NSPasteboard.general.clearContents()
+        cancelClipboardAutoClear()
     }
 
     // MARK: - Private
@@ -102,33 +161,52 @@ final class TextPaster {
 
     private func simulatePaste() {
         // Press Command
-        let cmdDown = CGEvent(keyboardEventSource: nil, virtualKey: Self.commandKey)
-        cmdDown?.setType(.keyDown)
+        let cmdDown = CGEvent(keyboardEventSource: nil, virtualKey: Self.commandKey, keyDown: true)
         cmdDown?.flags = .maskCommand
         cmdDown?.post(tap: .cghidEventTap)
 
         // Press V
-        let vDown = CGEvent(keyboardEventSource: nil, virtualKey: Self.vKeyCode)
-        vDown?.setType(.keyDown)
+        let vDown = CGEvent(keyboardEventSource: nil, virtualKey: Self.vKeyCode, keyDown: true)
         vDown?.post(tap: .cghidEventTap)
 
         // Release V
-        let vUp = CGEvent(keyboardEventSource: nil, virtualKey: Self.vKeyCode)
-        vUp?.setType(.keyUp)
+        let vUp = CGEvent(keyboardEventSource: nil, virtualKey: Self.vKeyCode, keyDown: false)
         vUp?.post(tap: .cghidEventTap)
 
         // Release Command
-        let cmdUp = CGEvent(keyboardEventSource: nil, virtualKey: Self.commandKey)
-        cmdUp?.setType(.keyUp)
+        let cmdUp = CGEvent(keyboardEventSource: nil, virtualKey: Self.commandKey, keyDown: false)
         cmdUp?.flags = []
         cmdUp?.post(tap: .cghidEventTap)
+    }
+
+    private func scheduleClipboardAutoClear() {
+        cancelClipboardAutoClear()
+        clipboardRestoreTimer = Timer.scheduledTimer(withTimeInterval: Self.clipboardAutoClearDelay, repeats: false) { [weak self] _ in
+            self?.clearClipboardIfOurs()
+        }
+    }
+
+    private func cancelClipboardAutoClear() {
+        clipboardRestoreTimer?.invalidate()
+        clipboardRestoreTimer = nil
+    }
+
+    private func clearClipboardIfOurs() {
+        // Only clear if clipboard contains our text (simple heuristic)
+        if let clipboardString = NSPasteboard.general.string(forType: .string),
+           clipboardString.count > Self.confirmationThreshold {
+            NSPasteboard.general.clearContents()
+        }
     }
 }
 
 // MARK: - ClipboardState
 
 private struct ClipboardState {
-    let data: [[(NSPasteboard.PasteboardType, Data)]]
+    let items: [[(NSPasteboard.PasteboardType, Data)]]
+    var stringValue: String? {
+        items.first?.first { $0.0 == .string }.flatMap { String(data: $0.1, encoding: .utf8) }
+    }
 
     static func save() -> ClipboardState {
         let pb = NSPasteboard.general
@@ -141,7 +219,7 @@ private struct ClipboardState {
             }
         }
 
-        return ClipboardState(data: items)
+        return ClipboardState(items: items)
     }
 
     static func restore(_ state: ClipboardState?) {
@@ -149,7 +227,7 @@ private struct ClipboardState {
         let pb = NSPasteboard.general
         pb.clearContents()
 
-        for item in state.data {
+        for item in state.items {
             for (type, data) in item {
                 pb.setData(data, forType: type)
             }

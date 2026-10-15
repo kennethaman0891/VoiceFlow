@@ -1,6 +1,5 @@
 import SwiftUI
 
-@main
 struct VoiceFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState: AppState
@@ -32,16 +31,27 @@ struct VoiceFlowApp: App {
         meetingManager = MeetingManager()
 
         // Wire hotkey callbacks to coordinator
-        hotkeyMonitor.onRecordingStart = {
-            Task { await coordinator.beginRecording() }
+        let coordinatorRef = coordinator
+        hotkeyMonitor.onRecordingStart = { @Sendable in
+            Task { @MainActor in await coordinatorRef.beginRecording() }
         }
-        hotkeyMonitor.onRecordingStop = {
-            Task { await coordinator.finishRecording() }
+        hotkeyMonitor.onRecordingStop = { @Sendable in
+            Task { @MainActor in await coordinatorRef.finishRecording() }
         }
 
         // Wire transcription ready to text paster
         coordinator.onTranscriptionReady = { [weak textPaster] text in
-            textPaster?.paste(text)
+            Task { @MainActor in
+                _ = await textPaster?.paste(text)
+            }
+        }
+
+        // Start hotkey monitoring (non-async call)
+        let hasPermission = hotkeyMonitor.start()
+        if hasPermission {
+            print("[VoiceFlow] Hotkey monitor started")
+        } else {
+            print("[VoiceFlow] Hotkey monitor failed - accessibility permission required")
         }
     }
 
@@ -51,15 +61,6 @@ struct VoiceFlowApp: App {
                 .environmentObject(appState)
                 .environmentObject(settings)
                 .environmentObject(coordinator)
-                .task {
-                    // Start hotkey monitoring when menu bar panel appears
-                    let hasPermission = hotkeyMonitor.start()
-                    if hasPermission {
-                        print("[VoiceFlow] Hotkey monitor started")
-                    } else {
-                        print("[VoiceFlow] Hotkey monitor failed - accessibility permission required")
-                    }
-                }
         } label: {
             Image(systemName: appState.menuBarIcon)
         }
@@ -91,6 +92,13 @@ struct VoiceFlowApp: App {
                 .environmentObject(appState)
         }
         .windowResizability(.contentSize)
+    }
+}
+
+@main
+struct VoiceFlowMain {
+    static func main() {
+        VoiceFlowApp.main()
     }
 }
 

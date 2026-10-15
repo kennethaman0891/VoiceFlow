@@ -29,7 +29,7 @@ struct ExportView: View {
                             }
                         }
                     }
-                    .pickerStyle(.options)
+                    .pickerStyle(.menu)
                 }
 
                 // Export button

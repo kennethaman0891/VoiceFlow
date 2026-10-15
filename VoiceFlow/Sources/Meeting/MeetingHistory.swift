@@ -42,23 +42,28 @@ final class MeetingHistory: ObservableObject {
     }
 
     /// Search meetings by keyword.
-    func search(_ query: String) -> [SavedMeeting] {
+    func search(_ query: String) async -> [SavedMeeting] {
         guard !query.isEmpty else { return meetings }
 
-        return meetings.filter { meeting in
+        var results: [SavedMeeting] = []
+        for meeting in meetings {
             // Check filename
             if meeting.fileName.lowercased().contains(query.lowercased()) {
-                return true
+                results.append(meeting)
+                continue
             }
 
             // Try to load and search content (expensive, so limit results)
             do {
                 let transcript = try await writer.load(from: meeting.url)
-                return transcript.formattedOutput.lowercased().contains(query.lowercased())
+                if transcript.formattedOutput.lowercased().contains(query.lowercased()) {
+                    results.append(meeting)
+                }
             } catch {
-                return false
+                // Skip meetings that can't be loaded
             }
         }
+        return results
     }
 
     // MARK: - Statistics

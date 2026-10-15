@@ -3,7 +3,8 @@ import Foundation
 // MARK: - MeetingMarkdownWriter
 
 /// Writes meeting transcripts to markdown files.
-final class MeetingMarkdownWriter {
+@MainActor
+final class MeetingMarkdownWriter: ObservableObject {
     static let shared = MeetingMarkdownWriter()
 
     private init() {}
@@ -14,7 +15,7 @@ final class MeetingMarkdownWriter {
             .appendingPathComponent("VoiceFlow")
             .appendingPathComponent("meetings")
 
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: appSupport!, withIntermediateDirectories: true)
         return appSupport
     }
 
@@ -47,10 +48,11 @@ final class MeetingMarkdownWriter {
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
             return files.map { file in
-                SavedMeeting(
+                let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                return SavedMeeting(
                     url: file,
                     fileName: file.deletingPathExtension().lastPathComponent,
-                    modificationDate: file.modificationDate
+                    modificationDate: modDate ?? Date()
                 )
             }
         } catch {
@@ -130,16 +132,16 @@ final class MeetingMarkdownWriter {
 
     private func parseSegmentLine(_ line: String) -> TranscriptSegment? {
         // Format: [HH:MM:SS] **Speaker:** text
-        let regex = try! NSRegularExpression(pattern: r"\[(\d{2}:\d{2}:\d{2})\]\s+\*\*(.+?)\*\*:\s+(.*)")
+        let regex = try! NSRegularExpression(pattern: #"\[(\d{2}:\d{2}:\d{2})\]\s+\*\*(.+?)\*\*:\s+(.*)"#)
         let nsRange = NSRange(line.startIndex..., in: line)
         guard let match = regex.firstMatch(in: line, range: nsRange),
               match.numberOfRanges >= 4 else {
             return nil
         }
 
-        let timestamp = (line as NSString).substring(with: match.rangeAt(1))
-        let speakerName = (line as NSString).substring(with: match.rangeAt(2))
-        let text = (line as NSString).substring(with: match.rangeAt(3))
+        let timestamp = (line as NSString).substring(with: match.range(at: 1))
+        let speakerName = (line as NSString).substring(with: match.range(at: 2))
+        let text = (line as NSString).substring(with: match.range(at: 3))
 
         let speaker: SpeakerLabel = speakerName.lowercased() == "you" ? .me : .remote(name: speakerName)
 
@@ -173,7 +175,7 @@ enum MeetingError: Error, LocalizedError {
 
 // MARK: - SavedMeeting
 
-struct SavedMeeting: Identifiable {
+struct SavedMeeting: Identifiable, Equatable {
     let url: URL
     let fileName: String
     let modificationDate: Date
@@ -184,6 +186,10 @@ struct SavedMeeting: Identifiable {
 
     var title: String {
         fileName.replacingOccurrences(of: "-", with: " ").capitalizingFirstLetter()
+    }
+
+    static func == (lhs: SavedMeeting, rhs: SavedMeeting) -> Bool {
+        lhs.url == rhs.url
     }
 }
 

@@ -27,6 +27,7 @@ enum VoiceCommand: String, CaseIterable {
 // MARK: - VoiceCommandParser
 
 /// Parses natural language voice commands.
+@MainActor
 final class VoiceCommandParser {
     static let shared = VoiceCommandParser()
 
@@ -81,7 +82,7 @@ final class VoiceCommandHandler {
 
     private let parser = VoiceCommandParser.shared
     private let meetingManager = MeetingManager.shared
-    private let coordinator: DictationCoordinator?
+    private var coordinator: DictationCoordinator?
 
     private init() {}
 
