@@ -90,3 +90,6 @@ default.profraw
 *.swp
 *.swo
 *~
+
+# ---- Local-only scratch (never commit) ----
+Website/backup/

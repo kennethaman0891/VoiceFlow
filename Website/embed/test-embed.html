@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceFlow Embed Widget — Test Page</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0A0E14; color: #EEF1FA; line-height: 1.6; padding: 40px 20px;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 2.5rem; margin-bottom: 0.5rem; background: linear-gradient(100deg, #3B82F6 0%, #1E3A8A 52%, #7DD3FC 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .subtitle { color: #9BA3B7; font-size: 1.1rem; margin-bottom: 3rem; }
+    .section { margin-bottom: 3rem; padding: 1.5rem; background: #0F1419; border: 1px solid rgba(255,255,255,0.08); border-radius: 18px; }
+    .section h2 { font-size: 1.3rem; margin-bottom: 1rem; color: #7DD3FC; }
+    .config-block { background: #06090E; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 1rem; font-family: ui-monospace, monospace; font-size: 0.85rem; overflow-x: auto; margin: 1rem 0; }
+    .config-block .comment { color: #6E7690; }
+    .config-block .key { color: #7DD3FC; }
+    .config-block .string { color: #59D6C6; }
+    .btn { display: inline-block; padding: 12px 24px; background: linear-gradient(100deg, #3B82F6 0%, #1E3A8A 52%, #7DD3FC 100%); color: white; border: none; border-radius: 999px; font-weight: 600; cursor: pointer; margin: 0.5rem 0.5rem 0.5rem 0; text-decoration: none; }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(59,130,246,0.4); }
+    .scenario { display: inline-block; padding: 0.25rem 0.75rem; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3); border-radius: 999px; font-size: 0.8rem; margin: 0.25rem; }
+    iframe.test-frame { width: 100%; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; background: #0A0E14; }
+    .note { font-size: 0.9rem; color: #9BA3B7; margin-top: 0.5rem; }
+    .note code { background: rgba(59,130,246,0.15); padding: 0.1rem 0.4rem; border-radius: 4px; font-family: ui-monospace, monospace; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+    @media (max-width: 600px) { h1 { font-size: 1.8rem; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>VoiceFlow Embed Widget</h1>
+    <p class="subtitle">Test page demonstrating cross-origin, iframe, mobile, and CSP scenarios</p>
+
+    <!-- Scenario 1: Basic same-origin embed -->
+    <section class="section">
+      <h2>1. Basic Embed (Same-Origin)</h2>
+      <p>Standard usage with assets hosted alongside the script.</p>
+      <div class="config-block"><span class="comment">// Configure before loading the script</span>
+window.VOICEFLOW_CONFIG = {
+  <span class="key">position</span>: <span class="string">"bottom-right"</span>,
+  <span class="key">title</span>: <span class="string">"Dictate"</span>,
+  <span class="key">theme</span>: <span class="string">"auto"</span>
+};
+      </div>
+      <span class="scenario">Same-Origin</span>
+      <span class="scenario">Desktop</span>
+      <span class="scenario">Mobile</span>
+      <p class="note">The widget below loads from <code>/embed/voiceflow-embed.js</code> with relative asset paths.</p>
+    </section>
+
+    <!-- Scenario 2: Cross-origin embed with assetsUrl -->
+    <section class="section">
+      <h2>2. Cross-Origin Embed (CDN Assets)</h2>
+      <p>Embed on any domain by pointing to absolute asset URLs.</p>
+      <div class="config-block"><span class="comment">// Configure with absolute assets URL</span>
+window.VOICEFLOW_CONFIG = {
+  <span class="key">assetsUrl</span>: <span class="string">"https://cdn.example.com/voiceflow/"</span>,
+  <span class="key">allowedOrigins</span>: [<span class="string">"https://your-site.com"</span>, <span class="string">"https://another-site.com"</span>],
+  <span class="key">nonce</span>: <span class="string">"csp-nonce-value"</span>
+};
+      </div>
+      <span class="scenario">Cross-Origin</span>
+      <span class="scenario">CSP Compatible</span>
+      <span class="scenario">CDN Assets</span>
+      <p class="note">Use <code>assetsUrl</code> (or <code>baseUrl</code>) for CDN-hosted assets. <code>allowedOrigins</code> enables secure postMessage.</p>
+    </section>
+
+    <!-- Scenario 3: Iframe embed with sandbox -->
+    <section class="section">
+      <h2>3. Iframe Embed (Sandboxed)</h2>
+      <p>Load widget in a sandboxed iframe with microphone and clipboard permissions.</p>
+      <div class="config-block"><span class="comment">// Parent page config</span>
+window.VOICEFLOW_CONFIG = {
+  <span class="key">assetsUrl</span>: <span class="string">"https://cdn.example.com/voiceflow/"</span>,
+  <span class="key">allowedOrigins</span>: [<span class="string">"https://parent-site.com"</span>]
+};
+      </div>
+      <span class="scenario">Iframe Sandbox</span>
+      <span class="scenario">Microphone Access</span>
+      <span class="scenario">Clipboard Access</span>
+      <p class="note">Iframe requires <code>allow="microphone; clipboard-write; clipboard-read"</code></p>
+      <iframe class="test-frame" height="400" srcdoc="
+        <!DOCTYPE html>
+        <html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>
+        <title>Iframe Embed Test</title>
+        <style>body{margin:0;padding:20px;background:#0A0E14;font-family:system-ui;color:#EEF1FA;min-height:300px;}</style>
+        </head><body>
+        <h3 style='color:#7DD3FC'>Sandboxed Iframe Embed</h3>
+        <p style='color:#9BA3B7'>This simulates a cross-origin iframe with sandbox attributes.</p>
+        <script>
+          window.VOICEFLOW_CONFIG = { assetsUrl: '/', allowedOrigins: ['*'], debug: true };
+        <\/script>
+        <script src='/embed/voiceflow-embed.js' defer><\/script>
+        </body></html>
+      "></iframe>
+    </section>
+
+    <!-- Scenario 4: Mobile responsive -->
+    <section class="section">
+      <h2>4. Mobile Responsive (Bottom Sheet)</h2>
+      <p>On viewports ≤480px, the panel becomes a full-width bottom sheet.</p>
+      <span class="scenario">Mobile ≤480px</span>
+      <span class="scenario">Bottom Sheet</span>
+      <span class="scenario">Touch Optimized</span>
+      <p class="note">Resize browser to <code><=480px</code> width to see bottom-sheet mode. Launch button becomes full-width bar.</p>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:1rem;">
+        <a class="btn" href="#" onclick="window.open('about:blank','_blank').document.write(`<!DOCTYPE html><html><head><meta name=viewport content='width=375,initial-scale=1'><title>Mobile Test</title></head><body style=background:#0A0E14;padding:20px><script>window.VOICEFLOW_CONFIG={debug:true}<\/script><script src='/embed/voiceflow-embed.js' defer><\/script></body></html>`);return false;">Test 375px (iPhone)</a>
+        <a class="btn" href="#" onclick="window.open('about:blank','_blank').document.write(`<!DOCTYPE html><html><head><meta name=viewport content='width=428,initial-scale=1'><title>Mobile Test</title></head><body style=background:#0A0E14;padding:20px><script>window.VOICEFLOW_CONFIG={debug:true}<\/script><script src='/embed/voiceflow-embed.js' defer><\/script></body></html>`);return false;">Test 428px (iPhone Pro)</a>
+        <a class="btn" href="#" onclick="window.open('about:blank','_blank').document.write(`<!DOCTYPE html><html><head><meta name=viewport content='width=320,initial-scale=1'><title>Mobile Test</title></head><body style=background:#0A0E14;padding:20px><script>window.VOICEFLOW_CONFIG={debug:true}<\/script><script src='/embed/voiceflow-embed.js' defer><\/script></body></html>`);return false;">Test 320px (Small)</a>
+      </div>
+    </section>
+
+    <!-- Scenario 5: CSP Strict Mode -->
+    <section class="section">
+      <h2>5. CSP Strict Mode (nonce + strict-dynamic)</h2>
+      <p>Works with strict CSP policies using nonce-based style injection.</p>
+      <div class="config-block"><span class="comment">// CSP header example</span>
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'nonce-{RANDOM}' 'strict-dynamic';
+  style-src 'nonce-{RANDOM}';
+  connect-src 'self' https://cdn.example.com;
+  media-src 'self' blob:;
+  worker-src 'self' blob:;
+      </div>
+      <div class="config-block"><span class="comment">// Embed with nonce</span>
+window.VOICEFLOW_CONFIG = {
+  <span class="key">nonce</span>: <span class="string">"{RANDOM_NONCE}"</span>,
+  <span class="key">assetsUrl</span>: <span class="string">"https://cdn.example.com/voiceflow/"</span>
+};
+      </div>
+      <span class="scenario">CSP Nonce</span>
+      <span class="scenario">strict-dynamic</span>
+      <span class="scenario">No Inline Styles</span>
+      <p class="note">The widget injects styles via <code>style.textContent</code> with the provided nonce. No inline scripts.</p>
+    </section>
+
+    <!-- Scenario 6: Error states -->
+    <section class="section">
+      <h2>6. Error States & Guidance</h2>
+      <p>Actionable error messages when assets aren't installed.</p>
+      <span class="scenario">Missing Assets</span>
+      <span class="scenario">Clear Instructions</span>
+      <span class="scenario">CDN Config Help</span>
+      <p class="note">When <code>assetsUrl</code> isn't configured and same-origin assets are missing, the widget shows setup instructions with your exact expected paths.</p>
+      <div style="background:#1E3A8A;border:1px solid #3B82F6;border-radius:12px;padding:1rem;margin-top:1rem;color:#EEF1FA;font-size:0.9rem;">
+        <strong>Example error message:</strong><br>
+        <code>On-device model not installed.</code><br>
+        <code>Configure VOICEFLOW_CONFIG.assetsUrl with the absolute URL to your VoiceFlow assets.</code><br>
+        <code>Example: window.VOICEFLOW_CONFIG = { assetsUrl: "https://cdn.example.com/voiceflow/" }</code>
+      </div>
+    </section>
+
+    <!-- Live widget on this page -->
+    <section class="section">
+      <h2>Live Widget on This Page</h2>
+      <p>The widget below is active. Click the microphone button to test.</p>
+      <span class="scenario">Live Demo</span>
+      <span class="scenario">Same-Origin</span>
+      <div style="min-height: 200px; position: relative;">
+        <p class="note">Widget loads at bottom-right of this page.</p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Load the embed widget -->
+  <script>
+    window.VOICEFLOW_CONFIG = {
+      position: "bottom-right",
+      title: "Dictate",
+      subtitle: "Speak — it types, on your device",
+      theme: "auto",
+      debug: true
+    };
+  </script>
+  <script src="/embed/voiceflow-embed.js" defer></script>
+</body>
+</html>

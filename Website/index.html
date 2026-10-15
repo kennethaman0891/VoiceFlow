@@ -5,7 +5,12 @@
     <!-- Strict, same-origin-only policy. 'wasm-unsafe-eval' is required by the
          on-device Whisper (WebAssembly); blob:/worker-src cover the audio + ONNX
          worker. No remote origins are permitted anywhere. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors *">
+    <meta http-equiv="X-Frame-Options" content="ALLOWALL">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Permissions-Policy" content="microphone=(), camera=(), geolocation=(), payment=(), usb=()">
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>VoiceFlow — Offline Speech-to-Text & Voice Dictation App (macOS, Windows, Linux)</title>
     <meta name="description" content="VoiceFlow is a privacy-first, fully offline speech-to-text & voice dictation app. Runs Whisper entirely on-device — no cloud, no API keys, no data leaves your machine. Free open-source desktop app for macOS, Windows & Linux plus browser demo.">
@@ -139,13 +144,24 @@
                 <a href="#how">How it works</a>
                 <a href="#download">Download</a>
             </div>
+            <button class="nav-toggle" id="navToggle" type="button" aria-label="Toggle navigation" aria-expanded="false" hidden>
+                <span class="nav-toggle-line" aria-hidden="true"></span>
+                <span class="nav-toggle-line" aria-hidden="true"></span>
+                <span class="nav-toggle-line" aria-hidden="true"></span>
+            </button>
             <a class="btn btn-primary btn-sm" id="navDownload" href="#download">Get VoiceFlow</a>
+        </div>
+        <div class="nav-mobile-menu" id="navMobileMenu" role="navigation" aria-label="Mobile navigation">
+            <a href="#features">Features</a>
+            <a href="#how">How it works</a>
+            <a href="#download">Download</a>
         </div>
     </nav>
 
     <!-- Hero -->
     <header class="hero" id="top">
         <div class="hero-aura" aria-hidden="true"></div>
+        <div class="hero-lines" aria-hidden="true"></div>
         <div class="container">
             <div class="hero-grid">
                 <!-- Left: copy + 3D logo -->
@@ -313,7 +329,7 @@
                         <li>History stays on your Mac</li>
                         <li>Works with no connection</li>
                     </ul>
-                    <button class="btn btn-primary btn-download" id="downloadMac" data-platform="macos" type="button">
+                    <button class="btn btn-primary btn-download btn-full-mobile" id="downloadMac" data-platform="macos" type="button">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         Download for macOS
                     </button>
@@ -335,7 +351,7 @@
                         <li>Local model, nothing uploaded</li>
                         <li>Works with no connection</li>
                     </ul>
-                    <button class="btn btn-primary btn-download" id="downloadWin" data-platform="windows" type="button">
+                    <button class="btn btn-primary btn-download btn-full-mobile" id="downloadWin" data-platform="windows" type="button">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         Download for Windows
                     </button>

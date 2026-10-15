@@ -9,10 +9,11 @@
  * (Transformers.js + WASM). No audio, transcript, or telemetry leaves the
  * device: there is no backend, no API, and no third-party service.
  *
- * The library and model are loaded from the SAME ORIGIN as this script
- * (js/vendor/ and models/). If those assets haven't been installed
- * (see setup-offline-stt.sh) the widget shows a friendly setup message and
- * never breaks the host page.
+ * Cross-origin embed support:
+ *   - Configure absolute asset URLs via VOICEFLOW_CONFIG.baseUrl or VOICEFLOW_CONFIG.assetsUrl
+ *   - Supports iframe sandbox with allow="microphone; clipboard-write; clipboard-read"
+ *   - Origin allowlist via VOICEFLOW_CONFIG.allowedOrigins for postMessage security
+ *   - CSP compatible (nonce-aware style injection)
  */
 (function () {
   'use strict';
@@ -20,59 +21,174 @@
   if (window.__voiceflowEmbedLoaded) return;
   window.__voiceflowEmbedLoaded = true;
 
+  // ---------------------------------------------------------------------------
+  // Configuration with cross-origin and CSP support
+  // ---------------------------------------------------------------------------
+  var USER_CFG = window.VOICEFLOW_CONFIG || {};
+
   var CFG = Object.assign({
-    position: 'bottom-right',              // 'bottom-right' | 'bottom-left'
+    position: 'bottom-right',
     title: 'Dictate',
     subtitle: 'Speak — it types, on your device',
-    theme: 'auto'                          // 'auto' | 'dark' | 'light'
-  }, window.VOICEFLOW_CONFIG || {});
+    theme: 'auto',
+    baseUrl: '',
+    assetsUrl: '',
+    allowedOrigins: [],
+    nonce: '',
+    mobileBreakpoint: 480,
+    panelWidth: 328,
+    panelMaxWidth: 'calc(100vw - 24px)',
+    debug: false
+  }, USER_CFG);
 
-  // --- Resolve local asset paths relative to THIS script's origin -------------
+  // ---------------------------------------------------------------------------
+  // Robust path resolution — works same-origin AND cross-origin
+  // ---------------------------------------------------------------------------
   var SCRIPT_SRC = (document.currentScript && document.currentScript.src) || '';
+  var SCRIPT_ORIGIN = '';
   var BASE = '';
-  try { BASE = new URL('../', SCRIPT_SRC).href; } catch (e) { BASE = ''; } // /embed/ -> site root
-  var LIB_URL = BASE ? BASE + 'js/vendor/transformers.min.js' : './js/vendor/transformers.min.js';
-  var MODEL_ROOT = BASE ? BASE + 'models/' : './models/';
-  var WASM_PATH = BASE ? BASE + 'js/vendor/' : './js/vendor/';
+  var ASSETS_BASE = '';
+
+  try {
+    if (SCRIPT_SRC) {
+      var scriptUrl = new URL(SCRIPT_SRC);
+      SCRIPT_ORIGIN = scriptUrl.origin;
+      BASE = new URL('../', SCRIPT_SRC).href;
+    }
+  } catch (e) {
+    BASE = '';
+  }
+
+  if (CFG.assetsUrl) {
+    ASSETS_BASE = CFG.assetsUrl.replace(/\/$/, '') + '/';
+  } else if (CFG.baseUrl) {
+    ASSETS_BASE = CFG.baseUrl.replace(/\/$/, '') + '/';
+  } else if (BASE) {
+    ASSETS_BASE = BASE;
+  } else {
+    ASSETS_BASE = '';
+  }
+
+  function log() {
+    if (CFG.debug && console.log) console.log('[VoiceFlow embed]', ...arguments);
+  }
+
+  function warn() {
+    if (console.warn) console.warn('[VoiceFlow embed]', ...arguments);
+  }
+
+  var LIB_URL = ASSETS_BASE ? ASSETS_BASE + 'js/vendor/transformers.min.js' : './js/vendor/transformers.min.js';
+  var MODEL_ROOT = ASSETS_BASE ? ASSETS_BASE + 'models/' : './models/';
+  var WASM_PATH = ASSETS_BASE ? ASSETS_BASE + 'js/vendor/' : './js/vendor/';
   var MODEL_PROBE = MODEL_ROOT + 'whisper-tiny.en/config.json';
   var MODEL_ID = 'whisper-tiny.en';
 
-  var NOT_INSTALLED =
-    'On-device model not installed yet. Run <code>./setup-offline-stt.sh</code> ' +
-    'and host <code>js/vendor/</code> + <code>models/</code> next to this script.';
+  // ---------------------------------------------------------------------------
+  // Origin validation & postMessage security
+  // ---------------------------------------------------------------------------
+  function isAllowedOrigin(origin) {
+    if (!CFG.allowedOrigins || CFG.allowedOrigins.length === 0) return true;
+    if (CFG.allowedOrigins.includes('*')) return true;
+    return CFG.allowedOrigins.some(function (allowed) {
+      try {
+        if (allowed instanceof RegExp) return allowed.test(origin);
+        return new URL(allowed).origin === new URL(origin).origin;
+      } catch (e) {
+        return allowed === origin;
+      }
+    });
+  }
 
+  function validateEmbedOrigin() {
+    if (!SCRIPT_ORIGIN) return { valid: false, reason: 'Unable to determine script origin (cross-origin without config)' };
+    var parentOrigin = window.location.origin;
+    if (SCRIPT_ORIGIN === parentOrigin) return { valid: true, sameOrigin: true };
+    if (isAllowedOrigin(parentOrigin)) {
+      return { valid: true, sameOrigin: false, parentOrigin: parentOrigin };
+    }
+    return { valid: false, reason: 'Parent origin ' + parentOrigin + ' not in allowedOrigins', parentOrigin: parentOrigin };
+  }
+
+  // ---------------------------------------------------------------------------
+  // CSP-compatible style injection (supports nonce)
+  // ---------------------------------------------------------------------------
+  function injectStyles(css, nonce) {
+    var style = document.createElement('style');
+    if (nonce) style.setAttribute('nonce', nonce);
+    style.textContent = css;
+    document.head.appendChild(style);
+    return style;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enhanced error states with actionable guidance
+  // ---------------------------------------------------------------------------
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function (m) {
+      var map = { '&': '&', '<': '<', '>': '>', '"': '"', "'": "'" };
+      return map[m];
+    });
+  }
+
+  function buildNotInstalledMessage() {
+    var parts = [];
+    parts.push('<strong>On-device model not installed.</strong>');
+    if (ASSETS_BASE) {
+      parts.push('Expected assets at: <code>' + escapeHtml(ASSETS_BASE) + '</code>');
+      parts.push('Ensure <code>js/vendor/transformers.min.js</code> and <code>models/whisper-tiny.en/</code> are hosted there.');
+    } else {
+      parts.push('Configure <code>VOICEFLOW_CONFIG.assetsUrl</code> or <code>VOICEFLOW_CONFIG.baseUrl</code> with the absolute URL to your VoiceFlow assets.');
+      parts.push('Example: <code>window.VOICEFLOW_CONFIG = { assetsUrl: "https://cdn.example.com/voiceflow/" }</code>');
+    }
+    parts.push('Or run <code>./setup-offline-stt.sh</code> and host assets alongside the embed script.');
+    return parts.join('<br>');
+  }
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
   var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var right = String(CFG.position).indexOf('left') === -1;
 
-  // --- State ---
   var asr = null, assetsReady = null, recording = false, busy = false, dictated = '';
   var audioCtx = null, mediaStream = null, sourceNode = null, processor = null, analyser = null, muteGain = null;
   var pcmChunks = [], recordRate = 16000;
+  var embedValidated = false;
+  var originValidation = null;
 
   // ---------------------------------------------------------------------------
-  // Styles (scoped under #vf-embed; supports dark + light)
+  // Styles — aligned with website blue theme (#3B82F6, #1E3A8A, #7DD3FC)
   // ---------------------------------------------------------------------------
   var CSS = [
     '#vf-embed,#vf-embed *{box-sizing:border-box}',
     '#vf-embed{position:fixed;bottom:22px;' + (right ? 'right:22px' : 'left:22px') + ';z-index:2147483000;',
       'font-family:-apple-system,"SF Pro Display","Segoe UI Variable","Segoe UI",system-ui,sans-serif;',
-      '--vf-flow:linear-gradient(100deg,#6D8BFF 0%,#A56BFF 52%,#59D6C6 100%);',
-      '--vf-panel:#141826;--vf-inset:#0E1119;--vf-text:#EEF1FA;--vf-text2:#9BA3B7;--vf-line:rgba(255,255,255,.12);--vf-live:#59D6C6}',
+      '--vf-flow:linear-gradient(100deg,#3B82F6 0%,#1E3A8A 52%,#7DD3FC 100%);',
+      '--vf-panel:#141826;--vf-inset:#0E1119;--vf-text:#EEF1FA;--vf-text2:#9BA3B7;--vf-line:rgba(255,255,255,.12);--vf-live:#7DD3FC}',
     '#vf-embed[data-theme="light"]{--vf-panel:#fff;--vf-inset:#F0F2F8;--vf-text:#0B0D14;--vf-text2:#545C72;--vf-line:rgba(11,13,20,.12);--vf-live:#12A594}',
-    '#vf-launch{width:58px;height:58px;border-radius:50%;border:none;cursor:pointer;display:grid;place-items:center;color:#fff;background:var(--vf-flow);box-shadow:0 14px 34px rgba(124,134,255,.45);transition:transform .16s ease,box-shadow .2s ease}',
+    '#vf-launch{width:58px;height:58px;border-radius:50%;border:none;cursor:pointer;display:grid;place-items:center;color:#fff;background:var(--vf-flow);box-shadow:0 14px 34px rgba(59,130,246,.45);transition:transform .16s ease,box-shadow .2s ease}',
     '#vf-launch:hover{transform:translateY(-2px) scale(1.03)}',
     '#vf-launch:focus-visible{outline:3px solid #7C86FF;outline-offset:3px}',
     '#vf-embed.is-recording #vf-launch{animation:vfRec 1.7s ease-in-out infinite}',
-    '@keyframes vfRec{0%,100%{box-shadow:0 14px 34px rgba(124,134,255,.45)}50%{box-shadow:0 14px 46px rgba(89,214,198,.6)}}',
-    '#vf-panel{position:absolute;bottom:72px;' + (right ? 'right:0' : 'left:0') + ';width:328px;max-width:calc(100vw - 32px);',
-      'background:var(--vf-panel);border:1px solid var(--vf-line);border-radius:20px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5);display:none}',
-    '#vf-embed.is-open #vf-panel{display:block}',
+    '@keyframes vfRec{0%,100%{box-shadow:0 14px 34px rgba(59,130,246,.45)}50%{box-shadow:0 14px 46px rgba(125,211,252,.6)}}',
+    '#vf-panel{position:absolute;bottom:72px;' + (right ? 'right:0' : 'left:0') + ';width:' + CFG.panelWidth + 'px;max-width:' + CFG.panelMaxWidth + ';',
+      'background:var(--vf-panel);border:1px solid var(--vf-line);border-radius:20px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5);display:none;',
+      'transform-origin:' + (right ? 'bottom right' : 'bottom left') + ';transition:opacity .18s ease,transform .18s ease}',
+    '#vf-embed.is-open #vf-panel{display:block;opacity:1;transform:scale(1)}',
+    '@media (max-width: ' + CFG.mobileBreakpoint + 'px){',
+      '#vf-embed{bottom:0;' + (right ? 'right:0' : 'left:0') + ';border-radius:0}',
+      '#vf-launch{width:100%;height:64px;border-radius:0;box-shadow:0 -4px 24px rgba(0,0,0,.3)}',
+      '#vf-panel{position:fixed;bottom:0;left:0;right:0;width:100%;max-width:100%;height:auto;max-height:calc(100vh - 64px);',
+        'border-radius:20px 20px 0 0;border-bottom:none;overflow-y:auto;transform:none}',
+      '#vf-embed.is-open #vf-panel{display:block;animation:vfSlideUp .25s ease}',
+      '@keyframes vfSlideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}',
+    '}',
     '#vf-head{display:flex;align-items:center;gap:10px;padding:13px 15px;border-bottom:1px solid var(--vf-line)}',
     '#vf-head h4{margin:0;font-size:14px;font-weight:650;color:var(--vf-text);letter-spacing:-.01em}',
     '#vf-head p{margin:1px 0 0;font-size:12px;color:var(--vf-text2)}',
     '#vf-x{margin-left:auto;width:30px;height:30px;border-radius:50%;border:1px solid var(--vf-line);background:transparent;color:var(--vf-text2);cursor:pointer;font-size:15px;line-height:1;display:grid;place-items:center}',
     '#vf-x:hover{color:var(--vf-text)}',
-    '#vf-stage{position:relative;height:64px;background:radial-gradient(120% 150% at 50% 130%,rgba(124,134,255,.18),transparent 60%),var(--vf-inset)}',
+    '#vf-stage{position:relative;height:64px;background:radial-gradient(120% 150% at 50% 130%,rgba(59,130,246,.18),transparent 60%),var(--vf-inset)}',
     '#vf-canvas{position:absolute;inset:0;width:100%;height:100%}',
     '#vf-body{padding:15px}',
     '#vf-transcript{min-height:60px;background:var(--vf-inset);border:1px solid var(--vf-line);border-radius:13px;padding:11px 13px;',
@@ -81,7 +197,7 @@
     '#vf-controls{display:flex;gap:9px;margin-top:13px}',
     '.vf-btn{appearance:none;font-family:inherit;font-weight:600;font-size:14px;min-height:44px;padding:10px 16px;border-radius:999px;cursor:pointer;border:1px solid transparent;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .16s ease,box-shadow .2s ease,border-color .2s ease}',
     '.vf-btn:focus-visible{outline:3px solid #7C86FF;outline-offset:2px}',
-    '#vf-rec{flex:1 1 auto;color:#fff;background:var(--vf-flow);box-shadow:0 12px 30px rgba(124,134,255,.4)}',
+    '#vf-rec{flex:1 1 auto;color:#fff;background:var(--vf-flow);box-shadow:0 12px 30px rgba(59,130,246,.4)}',
     '#vf-rec:hover{transform:translateY(-1px)}',
     '#vf-rec .vf-dot{width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 0 4px rgba(255,255,255,.22);transition:border-radius .18s ease}',
     '#vf-embed.is-recording #vf-rec{background:color-mix(in srgb,var(--vf-live) 22%,var(--vf-panel));color:var(--vf-text);box-shadow:0 0 0 1px color-mix(in srgb,var(--vf-live) 60%,transparent)}',
@@ -90,18 +206,24 @@
     '#vf-copy:hover{border-color:#7C86FF}',
     '#vf-status{margin:12px 0 0;text-align:center;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--vf-text2);min-height:1.1em}',
     '#vf-status.is-live{color:var(--vf-live)}#vf-status.is-error{color:#FF8F8F}',
-    '#vf-note{margin-top:12px;padding:11px 13px;border:1px solid var(--vf-line);border-left:3px solid #7C86FF;border-radius:12px;background:rgba(124,134,255,.12);color:var(--vf-text);font-size:12.5px;line-height:1.55}',
-    '#vf-note code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;background:rgba(124,134,255,.16);padding:1px 5px;border-radius:5px}',
+    '#vf-note{margin-top:12px;padding:11px 13px;border:1px solid var(--vf-line);border-left:3px solid #3B82F6;border-radius:12px;background:rgba(59,130,246,.12);color:var(--vf-text);font-size:12.5px;line-height:1.55}',
+    '#vf-note code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;background:rgba(59,130,246,.16);padding:1px 5px;border-radius:5px}',
     '#vf-foot{padding:9px 15px;border-top:1px solid var(--vf-line);font-size:11px;color:var(--vf-text2);display:flex;justify-content:space-between;align-items:center}',
-    '@media (prefers-reduced-motion: reduce){#vf-launch,#vf-rec,#vf-embed.is-recording #vf-launch{transition:none;animation:none}}'
+    '@media (prefers-reduced-motion: reduce){#vf-launch,#vf-rec,#vf-embed.is-recording #vf-launch,#vf-panel{transition:none;animation:none}}',
+    '@media (pointer: coarse){.vf-btn{min-height:48px;font-size:15px}}',
+    '@media (prefers-contrast: more){',
+      '#vf-launch{border:2px solid currentColor}',
+      '.vf-btn{border-width:2px}',
+      '#vf-transcript{border-width:2px}',
+    '}'
   ].join('\n');
 
   // ---------------------------------------------------------------------------
-  // Build DOM (no inline scripts / handlers; text set via textContent)
+  // Build DOM (no inline scripts/handlers; text via textContent)
   // ---------------------------------------------------------------------------
   function svg(markup) {
     var wrap = document.createElement('span');
-    wrap.innerHTML = markup; // static, trusted markup only
+    wrap.innerHTML = markup;
     return wrap.firstChild;
   }
 
@@ -126,16 +248,17 @@
   panel.id = 'vf-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'VoiceFlow dictation');
+  panel.setAttribute('aria-modal', 'true');
 
-  // Header
   var head = document.createElement('div');
   head.id = 'vf-head';
   var mark = document.createElement('img');
-  mark.src = '../logo.png';
+  mark.src = ASSETS_BASE ? ASSETS_BASE + 'logo.png' : '../logo.png';
   mark.alt = '';
   mark.width = 26;
   mark.height = 26;
   mark.setAttribute('aria-hidden', 'true');
+  mark.onerror = function () { mark.style.display = 'none'; };
   var headText = document.createElement('div');
   var h4 = document.createElement('h4'); h4.textContent = CFG.title;
   var sub = document.createElement('p'); sub.textContent = CFG.subtitle;
@@ -144,12 +267,10 @@
   closeBtn.id = 'vf-x'; closeBtn.type = 'button'; closeBtn.setAttribute('aria-label', 'Close'); closeBtn.textContent = '✕';
   head.appendChild(mark); head.appendChild(headText); head.appendChild(closeBtn);
 
-  // Stage + canvas
   var stage = document.createElement('div'); stage.id = 'vf-stage';
   var canvas = document.createElement('canvas'); canvas.id = 'vf-canvas'; canvas.setAttribute('aria-hidden', 'true');
   stage.appendChild(canvas);
 
-  // Body
   var body = document.createElement('div'); body.id = 'vf-body';
   var transcript = document.createElement('div');
   transcript.id = 'vf-transcript';
@@ -186,13 +307,23 @@
 
   root.appendChild(panel); root.appendChild(launch);
 
+  // ---------------------------------------------------------------------------
+  // Initialization & Validation
+  // ---------------------------------------------------------------------------
   function mount() {
-    var style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
+    originValidation = validateEmbedOrigin();
+    if (!originValidation.valid) {
+      log('Origin validation failed:', originValidation.reason);
+      if (CFG.debug) warn('Cross-origin embed: ' + originValidation.reason + '. Configure allowedOrigins for full features.');
+    }
+    embedValidated = true;
+
+    injectStyles(CSS, CFG.nonce);
+
     document.body.appendChild(root);
     init();
   }
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
 
@@ -200,8 +331,8 @@
   // Behaviour
   // ---------------------------------------------------------------------------
   function setStatus(text, cls) { status.textContent = text; status.className = cls || ''; }
-  function showNote(html) { note.innerHTML = html; note.hidden = false; }
-  function hideNote() { note.hidden = true; note.innerHTML = ''; }
+  function showNote(text) { note.textContent = text; note.hidden = false; }
+  function hideNote() { note.hidden = true; note.textContent = ''; }
 
   function renderTranscript() {
     if (!dictated) {
@@ -211,7 +342,7 @@
       return;
     }
     transcript.setAttribute('data-empty', 'false');
-    transcript.textContent = dictated; // user text via textContent — never markup
+    transcript.textContent = dictated;
     copyBtn.hidden = false;
   }
   function appendTranscript(text) {
@@ -223,13 +354,20 @@
 
   function probeAssets() {
     if (assetsReady !== null) return Promise.resolve(assetsReady);
-    return fetch(MODEL_PROBE, { method: 'GET', cache: 'force-cache' })
+    if (!ASSETS_BASE) {
+      assetsReady = false;
+      return Promise.resolve(false);
+    }
+    return fetch(MODEL_PROBE, { method: 'GET', cache: 'force-cache', credentials: 'omit' })
       .then(function (r) { assetsReady = r.ok; return assetsReady; })
       .catch(function () { assetsReady = false; return false; });
   }
 
   function ensureASR() {
     if (asr) return Promise.resolve(asr);
+    if (!ASSETS_BASE) {
+      return Promise.reject(new Error('No asset base URL configured. Set VOICEFLOW_CONFIG.assetsUrl or baseUrl.'));
+    }
     return import(LIB_URL).then(function (lib) {
       var env = lib.env;
       env.allowRemoteModels = false;
@@ -306,7 +444,7 @@
     for (i = 0; i < pcmChunks.length; i++) { merged.set(pcmChunks[i], off); off += pcmChunks[i].length; }
     pcmChunks = [];
     teardownAudio();
-    if (total < rate * 0.25) { setStatus('Didn’t catch that — hold a little longer.', ''); return Promise.resolve(); }
+    if (total < rate * 0.25) { setStatus("Didn't catch that — hold a little longer.", ''); return Promise.resolve(); }
     var samples = downsampleTo16k(merged, rate);
     setStatus('Transcribing on your device…', 'is-live');
     return Promise.resolve(asr(samples)).then(function (out) {
@@ -324,7 +462,7 @@
     var n = err && err.name;
     if (n === 'NotAllowedError' || n === 'SecurityError') return 'Microphone blocked — allow access, then try again.';
     if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No microphone found.';
-    return 'Couldn’t start the microphone.';
+    return "Couldn't start the microphone.";
   }
 
   function onRec() {
@@ -336,7 +474,7 @@
       recLabel.textContent = 'Start';
       setStatus('Transcribing on your device…', 'is-live');
       stopAndTranscribe().catch(function (e) {
-        console.warn('[VoiceFlow embed] transcription failed:', e);
+        log('transcription failed:', e);
         teardownAudio();
         setStatus('Transcription failed — try again.', 'is-error');
       }).then(function () { busy = false; });
@@ -345,8 +483,8 @@
     busy = true;
     hideNote();
     probeAssets().then(function (ready) {
-      if (!ready) { showNote(NOT_INSTALLED); setStatus('Model not installed yet.', ''); busy = false; return; }
-      if (!micSupported()) { setStatus('This browser can’t access the microphone.', 'is-error'); busy = false; return; }
+      if (!ready) { showNote(buildNotInstalledMessage()); setStatus('Model not installed yet.', ''); busy = false; return; }
+      if (!micSupported()) { setStatus("This browser can't access the microphone.", 'is-error'); busy = false; return; }
       if (!window.isSecureContext) { setStatus('Needs https or localhost for the mic.', 'is-error'); busy = false; return; }
 
       var loadStep = Promise.resolve();
@@ -354,9 +492,9 @@
         recBtn.disabled = true; recLabel.textContent = 'Loading…';
         setStatus('Loading model… first run only', '');
         loadStep = ensureASR().catch(function (e) {
-          console.warn('[VoiceFlow embed] model load failed:', e);
-          showNote(NOT_INSTALLED);
-          setStatus('Couldn’t load the local model.', 'is-error');
+          log('model load failed:', e);
+          showNote(buildNotInstalledMessage());
+          setStatus('Couldn\'t load the local model.', 'is-error');
           throw e;
         });
       }
@@ -379,7 +517,7 @@
     });
   }
 
-  // --- Ribbon (compact) ---
+  // --- Ribbon (compact) with website blue gradient ---
   var ctx2d = canvas.getContext('2d');
   var W = 0, H = 0, dpr = 1, grad = null, amp = 0, raf = null, t0 = 0;
   var LAYERS = [
@@ -393,7 +531,7 @@
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
     grad = ctx2d.createLinearGradient(0, 0, W, 0);
-    grad.addColorStop(0, '#6D8BFF'); grad.addColorStop(0.52, '#A56BFF'); grad.addColorStop(1, '#59D6C6');
+    grad.addColorStop(0, '#3B82F6'); grad.addColorStop(0.52, '#1E3A8A'); grad.addColorStop(1, '#7DD3FC');
   }
   function micAmp() {
     if (!analyser) return 0;
@@ -433,6 +571,51 @@
   }
   function stopRibbon() { if (raf != null) { window.cancelAnimationFrame(raf); raf = null; } }
 
+  // ---------------------------------------------------------------------------
+  // postMessage handler with origin validation (for iframe communication)
+  // ---------------------------------------------------------------------------
+  function handleMessage(event) {
+    if (!isAllowedOrigin(event.origin)) return;
+    var data = event.data;
+    if (!data || data.type !== 'voiceflow') return;
+
+    switch (data.action) {
+      case 'open':
+        if (!root.classList.contains('is-open')) {
+          root.classList.add('is-open');
+          startRibbon();
+        }
+        break;
+      case 'close':
+        root.classList.remove('is-open');
+        stopRibbon();
+        break;
+      case 'startDictation':
+        if (!recording && !busy) onRec();
+        break;
+      case 'stopDictation':
+        if (recording && !busy) onRec();
+        break;
+      case 'getTranscript':
+        event.source.postMessage({ type: 'voiceflow', action: 'transcript', text: dictated }, event.origin);
+        break;
+      case 'clearTranscript':
+        dictated = '';
+        renderTranscript();
+        break;
+    }
+  }
+
+  if (window.addEventListener) {
+    window.addEventListener('message', handleMessage);
+  }
+
+  function notifyParentReady() {
+    if (window !== window.parent && originValidation && originValidation.valid && !originValidation.sameOrigin) {
+      window.parent.postMessage({ type: 'voiceflow', action: 'ready', origin: window.location.origin }, '*');
+    }
+  }
+
   function init() {
     launch.addEventListener('click', function () {
       var open = root.classList.toggle('is-open');
@@ -457,7 +640,7 @@
           document.execCommand('copy');
           ta.remove();
           done();
-        } catch (e) { /* clipboard unavailable */ done(); }
+        } catch (e) { done(); }
       }
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') root.classList.remove('is-open'); });
@@ -471,8 +654,36 @@
       else if (raf == null) { t0 = window.performance ? performance.now() : Date.now(); raf = window.requestAnimationFrame(loop); }
     });
 
+    var lastBodyOverflow = '';
+    var mobileMQ = window.matchMedia('(max-width: ' + CFG.mobileBreakpoint + 'px)');
+    function handleMobileChange(e) {
+      if (e.matches && root.classList.contains('is-open')) {
+        lastBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+      } else {
+        document.body.style.overflow = lastBodyOverflow;
+      }
+    }
+    if (mobileMQ.addEventListener) mobileMQ.addEventListener('change', handleMobileChange);
+    else if (mobileMQ.addListener) mobileMQ.addListener(handleMobileChange);
+
+    var observer = new MutationObserver(function () {
+      if (mobileMQ.matches) {
+        if (root.classList.contains('is-open')) {
+          lastBodyOverflow = document.body.style.overflow;
+          document.body.style.overflow = 'hidden';
+        } else {
+          document.body.style.overflow = lastBodyOverflow;
+        }
+      }
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+
     (window.requestIdleCallback || function (fn) { setTimeout(fn, 500); })(function () {
-      probeAssets().then(function (ready) { if (!ready) { showNote(NOT_INSTALLED); setStatus('Model not installed yet.', ''); } });
+      probeAssets().then(function (ready) {
+        if (!ready) { showNote(buildNotInstalledMessage()); setStatus('Model not installed yet.', ''); }
+        notifyParentReady();
+      });
     });
   }
 })();

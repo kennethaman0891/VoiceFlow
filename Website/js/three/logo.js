@@ -416,16 +416,28 @@ function buildGlowEffects() {
 }
 
 // ─── Scene assembly ──────────────────────────────────────────────────────────
-async function init() {
-  const container = document.getElementById('logo-container');
-  if (!container) throw new Error('VoiceFlow 3D logo: #logo-container not found');
+async function createScene(container, options = {}) {
+  const {
+    isClone = false,
+    reduceMotion = false,
+    isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent),
+    isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4
+  } = options;
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ 
+    antialias: !isMobile, // Disable AA on mobile for performance
+    alpha: true, 
+    powerPreference: isMobile ? 'low-power' : 'high-performance',
+    preserveDrawingBuffer: false
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   container.appendChild(renderer.domElement);
+
+  // Store renderer reference on canvas for external resize handling
+  renderer.domElement._threeRenderer = renderer;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
@@ -468,6 +480,20 @@ async function init() {
 
   scene.add(logo);
 
+  let mx = 0, my = 0;
+  if (!reduceMotion && !isMobile) {
+    document.addEventListener('mousemove', (e) => {
+      mx = (e.clientX / window.innerWidth - 0.5) * 2;
+      my = (e.clientY / window.innerHeight - 0.5) * 2;
+    }, { passive: true });
+  }
+
+  let time = 0;
+  const startTime = performance.now();
+  let rafId = null;
+  let lastFrameTime = 0;
+  const frameThrottle = (isMobile || isLowEnd) ? 33 : 16; // ~30fps on mobile/low-end
+
   function resize() {
     const rect = container.getBoundingClientRect();
     const size = Math.min(rect.width, rect.height) || 400;
@@ -476,103 +502,114 @@ async function init() {
     camera.updateProjectionMatrix();
   }
   resize();
-  new ResizeObserver(resize).observe(container);
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
 
-  let mx = 0, my = 0;
-  document.addEventListener('mousemove', (e) => {
-    mx = (e.clientX / window.innerWidth - 0.5) * 2;
-    my = (e.clientY / window.innerHeight - 0.5) * 2;
-  }, { passive: true });
-
-  let time = 0;
-  const startTime = performance.now();
   function tick(now) {
-    requestAnimationFrame(tick);
+    rafId = requestAnimationFrame(tick);
+    
+    // Throttle frame rate on mobile/low-end
+    if (now - lastFrameTime < frameThrottle) return;
+    lastFrameTime = now;
+
     time = (now - startTime) * 0.001;
-    logo.rotation.y = Math.sin(time * LOGO.anim.rotSpeed) * 0.4;
-    logo.rotation.x = Math.cos(time * LOGO.anim.rotSpeed * 0.7) * 0.08;
-    camera.position.x += (mx * LOGO.anim.parallaxStrength - camera.position.x) * 0.04;
-    camera.position.y += (-my * LOGO.anim.parallaxStrength - camera.position.y) * 0.04;
+    
+    if (!reduceMotion) {
+      logo.rotation.y = Math.sin(time * LOGO.anim.rotSpeed) * 0.4;
+      logo.rotation.x = Math.cos(time * LOGO.anim.rotSpeed * 0.7) * 0.08;
+    }
+    
+    if (!reduceMotion && !isMobile) {
+      camera.position.x += (mx * LOGO.anim.parallaxStrength - camera.position.x) * 0.04;
+      camera.position.y += (-my * LOGO.anim.parallaxStrength - camera.position.y) * 0.04;
+    }
+    
     camera.lookAt(0, 0, 0);
     renderer.render(scene, camera);
   }
-  requestAnimationFrame(tick);
+  
+  // Handle reduced motion
+  if (reduceMotion) {
+    logo.rotation.y = 0;
+    logo.rotation.x = 0;
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+  } else {
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // Cleanup function
+  function dispose() {
+    if (rafId) cancelAnimationFrame(rafId);
+    ro.disconnect();
+    renderer.dispose();
+    // Dispose geometries and materials
+    scene.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach(m => m.dispose());
+        } else {
+          obj.material.dispose();
+        }
+      }
+    });
+    if (container.contains(renderer.domElement)) {
+      container.removeChild(renderer.domElement);
+    }
+  }
+
+  return { renderer, scene, camera, logo, dispose, resize };
+}
+
+// ─── Primary instance ────────────────────────────────────────────────────────
+let primaryInstance = null;
+let primaryContainer = null;
+
+async function init() {
+  const container = document.getElementById('logo-container');
+  if (!container) throw new Error('VoiceFlow 3D logo: #logo-container not found');
+  
+  primaryContainer = container;
+  
+  const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4;
+
+  primaryInstance = await createScene(container, { reduceMotion, isMobile, isLowEnd });
+  
+  // Handle reduced motion changes
+  if (window.matchMedia) {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    mediaQuery.addEventListener('change', (e) => {
+      if (primaryInstance) {
+        primaryInstance.dispose();
+        init();
+      }
+    });
+  }
 }
 
 // ─── Clone support for multiple containers ──────────────────────────────────
-let _logoInstance = null;
+window.VoiceFlowLogo = {
+  cloneTo: async function(targetContainer) {
+    const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+    const isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4;
+    
+    return await createScene(targetContainer, { 
+      isClone: true, 
+      reduceMotion, 
+      isMobile, 
+      isLowEnd 
+    });
+  },
+  
+  // Expose method to trigger resize on all instances
+  resizeAll: function() {
+    if (primaryInstance) primaryInstance.resize();
+  }
+};
 
 // Init the primary logo instance
 init().catch(console.error);
-
-window.VoiceFlowLogo = {
-  cloneTo: function(targetContainer) {
-    // Create a second renderer with its own scene
-    const renderer2 = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer2.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer2.outputColorSpace = THREE.SRGBColorSpace;
-    renderer2.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer2.toneMappingExposure = 1.0;
-    targetContainer.appendChild(renderer2.domElement);
-
-    const scene2 = new THREE.Scene();
-    const camera2 = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-    camera2.position.set(0, 0, 4.5);
-    scene2.add(new THREE.AmbientLight(0xffffff, 0.4));
-    const key2 = new THREE.DirectionalLight(0xfff4e6, 1.8); key2.position.set(3, 4, 5); scene2.add(key2);
-    const fill2 = new THREE.DirectionalLight(0x8899ff, 0.5); fill2.position.set(-4, 2, 3); scene2.add(fill2);
-    const rim2 = new THREE.DirectionalLight(0x22d3ee, 0.6); rim2.position.set(0, -3, -4); scene2.add(rim2);
-
-    // Clone all meshes with deep material copies
-    const logo2 = new THREE.Group();
-
-    async function cloneComponents() {
-      const frame = await buildFrame();
-      logo2.add(frame);
-      const bg = buildBackground();
-      logo2.add(bg);
-      bg.position.z = -0.15;
-      const waves = buildWaveLines();
-      logo2.add(waves);
-      const glow = buildGlowEffects();
-      logo2.add(glow);
-      const tGroup = buildTLetter();
-      tGroup.position.set(-0.55, 0, 0.15);
-      logo2.add(tGroup);
-      const bubble = buildSpeechBubble();
-      bubble.position.set(0.5, 0, 0.1);
-      logo2.add(bubble);
-      const mic = buildMicrophone();
-      mic.position.set(0.5, 0, 0.2);
-      logo2.add(mic);
-      const waves2 = buildSoundWaves();
-      waves2.position.set(0.5, 0, 0.22);
-      logo2.add(waves2);
-
-      scene2.add(logo2);
-
-      function resize2() {
-        const rect = targetContainer.getBoundingClientRect();
-        const size = Math.min(rect.width, rect.height) || 400;
-        renderer2.setSize(size, size);
-        camera2.aspect = 1;
-        camera2.updateProjectionMatrix();
-      }
-      resize2();
-      new ResizeObserver(resize2).observe(targetContainer);
-
-      let time2 = 0;
-      const startTime2 = performance.now();
-      function tick2(now) {
-        requestAnimationFrame(tick2);
-        time2 = (now - startTime2) * 0.001;
-        logo2.rotation.y = Math.sin(time2 * LOGO.anim.rotSpeed) * 0.4;
-        logo2.rotation.x = Math.cos(time2 * LOGO.anim.rotSpeed * 0.7) * 0.08;
-        renderer2.render(scene2, camera2);
-      }
-      requestAnimationFrame(tick2);
-    }
-
-    cloneComponents().catch(console.error);
-  }
-};

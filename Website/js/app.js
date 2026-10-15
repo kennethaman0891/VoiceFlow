@@ -1,10 +1,59 @@
-/**
- * VoiceFlow site shell — copy-to-clipboard for the embed snippet, a small toast,
- * and honest "build from source" guidance for the download buttons.
- * No network calls, no analytics.
- */
 (function () {
   'use strict';
+
+  // Mobile nav toggle
+  var navToggle = document.getElementById('navToggle');
+  var navMobileMenu = document.getElementById('navMobileMenu');
+  if (navToggle && navMobileMenu) {
+    var closeMenu = function () {
+      navToggle.setAttribute('aria-expanded', 'false');
+      navMobileMenu.classList.remove('is-open');
+      document.body.style.overflow = '';
+    };
+
+    var openMenu = function () {
+      navToggle.setAttribute('aria-expanded', 'true');
+      navMobileMenu.classList.add('is-open');
+      document.body.style.overflow = 'hidden';
+    };
+
+    navToggle.addEventListener('click', function () {
+      var isOpen = navToggle.getAttribute('aria-expanded') === 'true';
+      if (isOpen) { closeMenu(); } else { openMenu(); }
+    });
+
+    // Close menu when a link is clicked
+    var mobileLinks = navMobileMenu.querySelectorAll('a');
+    Array.prototype.forEach.call(mobileLinks, function (link) {
+      link.addEventListener('click', closeMenu);
+    });
+
+    // Close menu when clicking outside
+    document.addEventListener('click', function (e) {
+      if (!navToggle.contains(e.target) && !navMobileMenu.contains(e.target)) {
+        closeMenu();
+      }
+    });
+
+    // Close menu on Escape key
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && navMobileMenu.classList.contains('is-open')) {
+        closeMenu();
+        navToggle.focus();
+      }
+    });
+
+    // Handle resize - close menu if viewport becomes wide enough for desktop nav
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        if (window.innerWidth > 760 && navMobileMenu.classList.contains('is-open')) {
+          closeMenu();
+        }
+      }, 150);
+    });
+  }
 
   function copy(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -85,5 +134,36 @@
       var platform = btn.dataset.platform;
       if (BUILDS[platform]) window.alert(BUILDS[platform]);
     });
+  });
+
+  // Ensure 3D logo canvases resize properly on container changes
+  function handle3DCanvasResize() {
+    // Trigger resize on all Three.js canvases
+    var canvases = document.querySelectorAll('.hero-logo-wrap canvas, .mic-3d-wrap canvas');
+    canvases.forEach(function (canvas) {
+      // The ResizeObserver in logo.js should handle this, but we can force a reflow
+      if (canvas._threeRenderer) {
+        var rect = canvas.parentElement.getBoundingClientRect();
+        var size = Math.min(rect.width, rect.height) || 400;
+        canvas._threeRenderer.setSize(size, size);
+      }
+    });
+  }
+
+  // Expose for debugging
+  window.VoiceFlowApp = {
+    handle3DCanvasResize: handle3DCanvasResize
+  };
+
+  // Run initial resize check after DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', handle3DCanvasResize);
+  } else {
+    handle3DCanvasResize();
+  }
+
+  // Also check on orientation change
+  window.addEventListener('orientationchange', function () {
+    setTimeout(handle3DCanvasResize, 300);
   });
 })();

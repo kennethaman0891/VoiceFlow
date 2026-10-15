@@ -37,6 +37,8 @@
     'on-device transcription. Everything else on the page works without it.';
 
   var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  var isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4;
 
   // --- State ---
   var asr = null;            // the ASR pipeline once loaded
@@ -139,7 +141,7 @@
       sourceNode = audioCtx.createMediaStreamSource(stream);
 
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
+      analyser.fftSize = isMobile ? 512 : 1024; // Lower FFT on mobile for performance
       analyser.smoothingTimeConstant = 0.82;
       sourceNode.connect(analyser);
 
@@ -205,7 +207,7 @@
     teardownAudio(); // releases the mic immediately
 
     if (total < rate * 0.25) { // less than ~0.25s captured
-      setStatus('Didn’t catch that — hold the button a little longer.');
+      setStatus('Didn\'t catch that — hold the button a little longer.');
       return Promise.resolve();
     }
 
@@ -229,12 +231,12 @@
   function micErrorMessage(err) {
     var name = err && err.name;
     if (name === 'NotAllowedError' || name === 'SecurityError') {
-      return 'Microphone blocked — allow access from your browser’s address bar, then try again.';
+      return 'Microphone blocked — allow access from your browser\'s address bar, then try again.';
     }
     if (name === 'NotFoundError' || name === 'OverconstrainedError') {
       return 'No microphone found — connect one and try again.';
     }
-    return 'Couldn’t start the microphone (' + (name || 'unknown error') + ').';
+    return 'Couldn\'t start the microphone (' + (name || 'unknown error') + ').';
   }
 
   // ---------------------------------------------------------------------------
@@ -272,7 +274,7 @@
     hideNote();
     probeAssets().then(function (ready) {
       if (!ready) { showNote(NOT_INSTALLED); setStatus('Model not installed yet.'); busy = false; return; }
-      if (!micSupported()) { setStatus('This browser can’t access the microphone.', 'is-error'); busy = false; return; }
+      if (!micSupported()) { setStatus('This browser can\'t access the microphone.', 'is-error'); busy = false; return; }
       if (!window.isSecureContext) { setStatus('Serve the site over https or localhost to use the mic.', 'is-error'); busy = false; return; }
 
       var loadStep = Promise.resolve();
@@ -284,7 +286,7 @@
         loadStep = ensureASR().catch(function (e) {
           console.warn('[VoiceFlow] model load failed:', e);
           showNote(NOT_INSTALLED);
-          setStatus('Couldn’t load the local model.', 'is-error');
+          setStatus('Couldn\'t load the local model.', 'is-error');
           throw e;
         });
       }
@@ -316,10 +318,12 @@
   var ctx2d = canvas.getContext('2d');
   var W = 0, H = 0, dpr = 1, ribbonGrad = null;
   var currentAmp = 0, rafId = null, t0 = 0;
+  var lastFrameTime = 0;
+  var frameThrottle = isMobile || isLowEnd ? 33 : 16; // ~30fps on mobile/low-end, ~60fps desktop
 
   function sizeCanvas() {
     var rect = canvas.getBoundingClientRect();
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2); // Cap DPR on mobile
     W = Math.max(1, Math.round(rect.width));
     H = Math.max(1, Math.round(rect.height));
     canvas.width = Math.round(W * dpr);
@@ -373,6 +377,13 @@
   }
 
   function frame(now) {
+    // Throttle frame rate on mobile/low-end devices
+    if (now - lastFrameTime < frameThrottle) {
+      rafId = window.requestAnimationFrame(frame);
+      return;
+    }
+    lastFrameTime = now;
+
     var t = (now - t0) / 1000;
     var target = recording ? micAmplitude() : 0;
     currentAmp += (target - currentAmp) * 0.12;
@@ -428,12 +439,21 @@
     });
   }
 
-  // Resize handling
+  // Resize handling - improved with debounce
+  var resizeTimer = null;
+  function handleResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      sizeCanvas();
+      if (reduceMotion) drawRibbon(0, 0);
+    }, 100);
+  }
+
   if ('ResizeObserver' in window) {
-    var ro = new ResizeObserver(function () { sizeCanvas(); if (reduceMotion) drawRibbon(0, 0); });
+    var ro = new ResizeObserver(handleResize);
     ro.observe(canvas);
   } else {
-    window.addEventListener('resize', function () { sizeCanvas(); if (reduceMotion) drawRibbon(0, 0); });
+    window.addEventListener('resize', handleResize);
   }
 
   // Pause the animation loop while the tab is hidden (battery friendly)
