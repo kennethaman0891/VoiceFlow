@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox (required for Mac App Store / hardened runtime) -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Network access -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <false/>
+
+    <!-- File system access -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+    <key>com.apple.security.files.downloads.read-only</key>
+    <true/>
+
+    <!-- Hardware access -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <false/>
+
+    <!-- No USB access -->
+    <key>com.apple.security.device.usb</key>
+    <false/>
+    <key>com.apple.security.device.bluetooth</key>
+    <false/>
+
+    <!-- No printing -->
+    <key>com.apple.security.print</key>
+    <false/>
+
+    <!-- No calendar/contacts/reminders -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <false/>
+    <key>com.apple.security.personal-information.addressbook</key>
+    <false/>
+    <key>com.apple.security.personal-information.location</key>
+    <false/>
+
+    <!-- Allow JIT for WebView (required for Tauri) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Disable debugging for production -->
+    <key>com.apple.security.get-task-allow</key>
+    <false/>
+
+    <!-- No child processes -->
+    <key>com.apple.security.inherit</key>
+    <false/>
+
+    <!-- Allow Apple Events for hotkey/accessibility integration -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!-- Scripting targets (for text insertion) -->
+    <key>com.apple.security.scripting-targets</key>
+    <dict/>
+</dict>
+</plist>

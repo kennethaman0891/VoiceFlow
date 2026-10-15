@@ -1,76 +1,158 @@
-# VoiceFlow (Tauri)
+# VoiceFlow v2
 
-A macOS menu-bar speech-to-text app built with **Tauri v2** and **Rust**. VoiceFlow captures your microphone and transcribes it locally with [Whisper](https://github.com/ggerganov/whisper.cpp) — **fully offline, no internet, no API key**.
-
-> This Tauri app lives **beside** the existing Swift VoiceFlow app and does not replace it.
+A privacy-first, offline voice dictation app built with Tauri 2. Runs 100% locally with zero cloud dependency — no Ollama server, no API keys, no internet required.
 
 ## Features
 
-- **Offline Whisper STT** — speech recognition runs entirely on-device via `whisper-rs` (whisper.cpp). No cloud, no API key.
-- **Menu-bar app** — `LSUIElement` keeps VoiceFlow out of the Dock; it runs in the background and shows a small window on demand.
-- **Global shortcut** — press **⌘⇧V** (Cmd+Shift+V) anywhere to toggle recording.
-- **Tray menu** — a tray icon with *Show VoiceFlow*, *Start / Stop Recording*, and *Quit*.
-- **In-app controls** — a mic button in the window toggles recording.
-- **Settings panel** (gear icon) for:
-  - **Language** — pick a language or set *auto* detection.
-  - **Auto-copy to clipboard** — automatically copy the transcript when transcription finishes.
-  - **Custom model path** — point VoiceFlow at a different Whisper `.bin` model.
+- **Push-to-Talk Dictation** — Hold Ctrl+Space to record, release to transcribe and paste
+- **Offline Speech-to-Text** — whisper.cpp running locally (medium.en model)
+- **Text Cleanup** — Optional LLM-powered cleanup with Qwen 3.5 0.8B (removes fillers, adds punctuation)
+- **Auto-Paste** — Automatically pastes cleaned text into your active application
+- **Menu Bar App** — Lightweight system tray icon, no dock presence
+- **Zero Network Activity** — Models downloaded once, then fully offline
 
-## Prerequisites
+## Architecture
 
-- **Rust toolchain** — install via [rustup](https://rustup.rs).
-- **Node.js 24+** — required by the Tauri CLI / Vite frontend.
-- **cmake** — `brew install cmake` (needed to build `whisper-rs` / `whisper.cpp`).
-- **Xcode Command Line Tools** — `xcode-select --install`.
-- **macOS microphone permission** — grant access when prompted; the app declares `NSMicrophoneUsageDescription` for this.
+```
+voiceflow/
+├── src-tauri/                 # Rust backend
+│   ├── src/
+│   │   ├── main.rs           # Tauri entry point & commands
+│   │   ├── state.rs          # Shared app state
+│   │   ├── audio/            # cpal-based microphone capture
+│   │   ├── speech/           # whisper.cpp FFI wrapper
+│   │   ├── cleanup/          # llama.cpp FFI wrapper (optional)
+│   │   ├── input/            # Global hotkey + clipboard paste
+│   │   └── model/            # Model download & caching
+│   ├── tauri.conf.json       # Tauri v2 configuration
+│   └── capabilities/         # Permission definitions
+├── src/                      # React/TypeScript frontend
+│   ├── main.tsx              # Entry point
+│   ├── App.tsx               # Main component
+│   ├── components/           # React components
+│   │   ├── MenuBar.tsx
+│   │   ├── RecordingOverlay.tsx
+│   │   ├── TranscriptView.tsx
+│   │   ├── SettingsPanel.tsx
+│   │   └── Onboarding.tsx
+│   └── styles.css            # Complete stylesheet
+└── public/
+    └── favicon.svg
+```
 
-## Setup
+## Tech Stack
 
-1. Install JS dependencies:
+- **Framework**: Tauri v2 (Rust + WebView)
+- **Speech-to-Text**: whisper.cpp (FFI bindings)
+- **Text Cleanup**: llama.cpp (FFI bindings, optional)
+- **Audio Capture**: cpal crate
+- **Frontend**: React 18 + TypeScript + Vite
+- **Global Hotkeys**: tauri-plugin-global-shortcut
+- **Clipboard**: arboard crate
 
-   ```bash
-   npm install
-   ```
+## Requirements
 
-2. Download the Whisper model into `src-tauri/models/`:
+- macOS 13.0+ / Windows 10+ / Linux (Ubuntu 22.04+)
+- Rust toolchain (1.77+)
+- Node.js 18+
+- For whisper.cpp GPU acceleration: Metal (macOS) or Vulkan (Windows/Linux)
 
-   ```bash
-   mkdir -p src-tauri/models
-   curl -L -o src-tauri/models/ggml-base.bin \
-     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-   ```
-
-   > The default model is `ggml-base.bin`. VoiceFlow looks for it next to the executable and falls back to `src-tauri/models/`. You can use a different model via the settings panel.
-
-3. Run the app in development:
-
-   ```bash
-   npm run tauri dev
-   ```
-
-## Usage
-
-- **⌘⇧V** toggles recording from anywhere. Recording also toggles from the tray menu or the in-app mic button.
-- Speak, then toggle off — the transcript appears in the window once processing finishes.
-- Click the **gear** icon to open settings: choose the recognition **language** (or *auto*), enable **auto-copy to clipboard**, or set a **custom model path**.
-- Closing the window hides VoiceFlow to the menu bar rather than quitting. Use the tray menu *Quit VoiceFlow* to exit.
-
-## Build a Release Bundle
+## Installation
 
 ```bash
+# Install system dependencies (macOS)
+brew install libsndfile
+
+# Install npm dependencies
+npm install
+
+# Install Tauri CLI
+npm install -g @tauri-apps/cli
+```
+
+## Development
+
+```bash
+# Start development server
+npm run tauri dev
+
+# Build for production
 npm run tauri build
 ```
 
-This produces a macOS `.app` in:
+## Usage
 
+1. **First launch**: The app will check for required models and guide you through downloads
+2. **Dictate**: Press and hold `Ctrl+Space` anywhere on your system, or click the mic widget
+3. **Release**: The transcribed (and optionally cleaned) text is automatically pasted
+4. **Settings**: Click the gear icon to configure language, models, and auto-paste
+
+### Mic Widget
+
+The app includes a dedicated floating mic widget you can drag to any position on screen:
+
+- Click to start/stop dictation
+- Drag to reposition the widget
+- Double-click to reset to default position
+- Keyboard shortcut: `Space` to start recording (when idle)
+- Position is saved between sessions
+
+The widget provides visual feedback when recording and can be moved anywhere on screen for convenient access.
+
+## Model Management
+
+Models are stored in:
+- **macOS**: `~/Library/Application Support/VoiceFlow/models/`
+- **Linux**: `~/.local/share/voiceflow/models/`
+- **Windows**: `%APPDATA%\VoiceFlow\models\`
+
+Available models:
+| Model | Size | Description |
+|-------|------|-------------|
+| Tiny | 75 MB | Fastest, lower accuracy |
+| Base | 148 MB | Good balance |
+| Small | 488 MB | Better accuracy |
+| Medium | 1.5 GB | Best accuracy (default) |
+
+## Privacy
+
+VoiceFlow is designed for maximum privacy:
+- All processing happens locally on your device
+- No telemetry, analytics, or crash reporting
+- No data ever leaves your machine after initial model download
+- Zero network activity during normal operation
+
+## Building from Source
+
+### Prerequisites
+
+```bash
+# macOS
+brew install rustup libsndfile
+
+# Ubuntu/Debian
+sudo apt-get install -y build-essential curl libssl1.1 libasound2-dev
+
+# Windows
+# Install Rust via rustup, ensure Visual Studio Build Tools installed
 ```
-src-tauri/target/release/bundle/macos/VoiceFlow.app
+
+### Steps
+
+```bash
+# Clone and enter directory
+cd tauri-app
+
+# Install frontend dependencies
+npm install
+
+# Run in development mode
+npm run tauri dev
+
+# Build for distribution
+npm run tauri build
 ```
 
-The bundle target is `app` only, with a minimum system version of macOS 10.15 (Catalina).
+## License
 
-## Notes
-
-- Identifier: `com.kennethaman.voiceflow`.
-- Audio is captured with `cpal` and resampled to 16 kHz mono before being handed to Whisper (which expects that rate).
-- This Tauri implementation is a companion to the existing Swift VoiceFlow app and is designed to coexist with it.
+MIT

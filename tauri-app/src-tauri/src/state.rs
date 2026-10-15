@@ -1,89 +1,129 @@
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-
+use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
-use tauri::Emitter;
+use once_cell::sync::Lazy;
+use crossbeam_channel::{Sender, Receiver};
 
-use crate::audio;
-use crate::whisper;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub language: String,
-    pub model_path: String,
-    pub auto_paste: bool,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AppStatus {
+    Idle,
+    Recording,
+    Transcribing,
+    Cleaning,
+    Error(String),
 }
 
-impl Default for Config {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default = "default_auto_paste")]
+    pub auto_paste: bool,
+    #[serde(default = "default_show_mic_widget")]
+    pub show_mic_widget: bool,
+    #[serde(default)]
+    pub output_device: Option<String>,
+    #[serde(default = "default_whisper_model")]
+    pub whisper_model: String,
+    #[serde(default = "default_cleanup_model")]
+    pub cleanup_model: String,
+}
+
+impl Default for AppSettings {
     fn default() -> Self {
-        Config {
-            language: "en".to_string(),
-            model_path: crate::default_model_path().to_string_lossy().into(),
-            auto_paste: false,
+        Self {
+            language: default_language(),
+            auto_paste: default_auto_paste(),
+            show_mic_widget: default_show_mic_widget(),
+            output_device: None,
+            whisper_model: default_whisper_model(),
+            cleanup_model: default_cleanup_model(),
         }
     }
+}
+
+fn default_language() -> String { "en".to_string() }
+fn default_auto_paste() -> bool { true }
+fn default_show_mic_widget() -> bool { true }
+fn default_whisper_model() -> String { "medium".to_string() }
+fn default_cleanup_model() -> String { "off".to_string() }
+
+#[derive(Debug, Clone)]
+pub enum AppEvent {
+    StatusChanged(AppStatus),
+    Transcript(String),
+    Error(String),
+    RecordingStarted,
+    RecordingStopped,
 }
 
 pub struct AppState {
-    pub app: AppHandle,
-    pub recording: Arc<Mutex<bool>>,
-    pub samples: Arc<Mutex<Vec<f32>>>,
-    /// Set `true` to tell the capture thread to stop and drop its stream.
-    pub stop_flag: Arc<AtomicBool>,
-    pub capture_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
-    pub capture_rate: Arc<Mutex<u32>>,
-    pub engine: Arc<Mutex<Option<whisper_rs::WhisperContext>>>,
-    pub config: Arc<Mutex<Config>>,
+    pub settings: Mutex<AppSettings>,
+    pub current_transcript: Mutex<Vec<String>>,
+    pub status: Mutex<AppStatus>,
+    pub event_tx: Mutex<Sender<AppEvent>>,
 }
 
 impl AppState {
-    pub fn with_config(app: AppHandle, config: Config) -> Self {
+    pub fn new() -> Self {
+        let (tx, rx) = crossbeam_channel::unbounded();
+
+        // Spawn receiver task
+        std::thread::spawn(move || {
+            while let Ok(event) = rx.recv() {
+                match &event {
+                    AppEvent::StatusChanged(s) => {
+                        log::info!("Status changed: {:?}", s);
+                    }
+                    AppEvent::Transcript(t) => {
+                        log::info!("Transcript received: {}", t.chars().take(50).collect::<String>());
+                    }
+                    AppEvent::Error(e) => {
+                        log::warn!("App error: {}", e);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
         AppState {
-            config: Arc::new(Mutex::new(config)),
-            ..AppState::new(app)
+            settings: Mutex::new(AppSettings::default()),
+            current_transcript: Mutex::new(Vec::new()),
+            status: Mutex::new(AppStatus::Idle),
+            event_tx: Mutex::new(tx),
         }
     }
 
-    pub fn new(app: AppHandle) -> Self {
-        AppState {
-            app,
-            recording: Arc::new(Mutex::new(false)),
-            samples: Arc::new(Mutex::new(Vec::new())),
-            stop_flag: Arc::new(AtomicBool::new(false)),
-            capture_thread: Arc::new(Mutex::new(None)),
-            capture_rate: Arc::new(Mutex::new(16000)),
-            engine: Arc::new(Mutex::new(None)),
-            config: Arc::new(Mutex::new(Config::default())),
+    pub fn emit(&self, event: AppEvent) {
+        if let Ok(tx) = self.event_tx.lock() {
+            let _ = tx.send(event);
         }
     }
 
-    pub fn emit_state(&self, s: &str) {
-        let _ = self.app.emit("state-change", s.to_string());
+    pub fn set_status(&self, status: AppStatus) {
+        *self.status.lock().unwrap() = status.clone();
+        self.emit(AppEvent::StatusChanged(status));
     }
+}
 
-    pub fn toggle(&self) -> Result<String, String> {
-        let rec = *self.recording.lock().unwrap();
-        if rec {
-            self.stop()
-        } else {
-            self.start()
-        }
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    fn start(&self) -> Result<String, String> {
-        audio::start_capture(self)?;
-        *self.recording.lock().unwrap() = true;
-        self.emit_state("recording");
-        Ok("recording".to_string())
-    }
+// Module-level singleton
+pub static APP_STATE: Lazy<Mutex<AppState>> = Lazy::new(|| Mutex::new(AppState::new()));
 
-    fn stop(&self) -> Result<String, String> {
-        let samples = audio::stop_capture(self);
-        *self.recording.lock().unwrap() = false;
-        self.emit_state("idle");
-        whisper::transcribe(self, samples);
-        Ok("idle".to_string())
-    }
+pub fn get_state() -> &'static Mutex<AppState> {
+    &APP_STATE
+}
+
+/// Helper to lock and access AppState fields
+pub fn with_state<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut AppState) -> R,
+{
+    let mut state = APP_STATE.lock().unwrap();
+    f(&mut state)
 }

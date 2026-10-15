@@ -1,417 +1,417 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
-use std::env::current_exe;
-use std::path::PathBuf;
-
-use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
-use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
 mod audio;
-mod editor;
+mod cleanup;
+mod input;
+mod model;
+mod speech;
 mod state;
-mod whisper;
-mod whisperflow;
 
-use editor::EditorConfig;
-use state::{AppState, Config};
-use whisperflow::WhisperFlowConfig;
-
+use state::{with_state, AppStatus};
+use audio::recorder::AudioRecorder;
+use speech::transcriber::{WhisperContext, WhisperParams};
+use cleanup::cleaner::LlamaContext;
+use model::manager::ModelManager;
+use input::hotkey::HotkeyManager;
+use input::paster::Paster;
 use std::sync::Mutex;
-use tokio::sync::mpsc;
+use std::path::{Path, PathBuf};
+use tauri::{async_runtime::spawn, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
+use tauri::image::Image;
 
-/// Global state for the WhisperFlow streaming engine.
-struct WhisperFlowState {
-    /// Channel sender to send audio chunks to the streaming engine.
-    sender: Mutex<Option<mpsc::Sender<whisperflow::AudioMessage>>>,
-    /// Current configuration.
-    config: Mutex<WhisperFlowConfig>,
-    /// Editor configuration.
-    editor_config: Mutex<EditorConfig>,
+/// Application state holding long-lived objects
+struct AppStateInternal {
+    recorder: Option<AudioRecorder>,
+    whisper: Option<WhisperContext>,
+    cleaner: Option<LlamaContext>,
+    paster: Option<Paster>,
+    hotkey_manager: Option<HotkeyManager>,
+    whisper_model_path: Option<PathBuf>,
+    cleanup_model_path: Option<PathBuf>,
 }
 
-/// Resolve the Groq API key with a robust precedence order.
-///
-/// 1. Already-set process env var `GROQ_API_KEY`.
-/// 2. `dotenv::dotenv()` which reads `.env` from the current working directory.
-/// 3. Explicit candidate paths (some of which mirror the `.env` locations that
-///    Tauri uses across dev / bundled layouts):
-///      - CWD/.env
-///      - CWD/../.env
-///      - exe_dir/../.env
-///      - exe_dir/../../.env  (exe_dir = current_exe().parent())
-///      - /Users/kennethaman/VoiceFlow/.env   (known project root)
-/// The first source that yields a non-empty `GROQ_API_KEY` wins.
-fn resolve_groq_api_key() -> String {
-    // (a) process env var already set
-    if let Ok(v) = std::env::var("GROQ_API_KEY") {
-        if !v.trim().is_empty() {
-            return v;
-        }
+// Global state holder
+static APP_DATA: Mutex<Option<AppStateInternal>> = Mutex::new(None);
+
+fn with_app_data<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut AppStateInternal) -> R,
+{
+    let mut data = APP_DATA.lock().unwrap();
+    if data.is_none() {
+        data.insert(AppStateInternal {
+            recorder: None,
+            whisper: None,
+            cleaner: None,
+            paster: None,
+            hotkey_manager: None,
+            whisper_model_path: None,
+            cleanup_model_path: None,
+        });
     }
+    f(data.as_mut().unwrap())
+}
 
-    // (b) dotenv::dotenv() from the current working directory
-    let _ = dotenv::dotenv();
-    if let Ok(v) = std::env::var("GROQ_API_KEY") {
-        if !v.trim().is_empty() {
-            return v;
-        }
-    }
+// Tauri commands
 
-    // (c) search candidate paths in order
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let exe_dir = current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_default();
+#[tauri::command]
+async fn get_models() -> Vec<model::manager::ModelInfo> {
+    ModelManager::check_models().await.unwrap_or_default()
+}
 
-    let candidates = [
-        cwd.join(".env"),
-        cwd.join("../.env"),
-        exe_dir.join("../.env"),
-        exe_dir.join("../../.env"),
-        PathBuf::from("/Users/kennethaman/VoiceFlow/.env"),
-    ];
+#[tauri::command]
+async fn download_model(url: String, filename: String, expected_sha256: Option<String>) -> Result<PathBuf, String> {
+    ModelManager::download_model(&url, &filename, expected_sha256.as_deref()).await
+        .map_err(|e| e.to_string())
+}
 
-    for path in candidates {
-        if path.is_file() {
-            let _ = dotenv::from_path(&path);
-            if let Ok(v) = std::env::var("GROQ_API_KEY") {
-                if !v.trim().is_empty() {
-                    eprintln!("[VoiceFlow] loaded GROQ_API_KEY from {}", path.display());
-                    return v;
+#[tauri::command]
+fn toggle_recording(app: tauri::AppHandle) -> Result<String, String> {
+    with_app_data(|data| {
+        if data.recorder.as_ref().map(|r| r.is_recording()).unwrap_or(false) {
+            // Stop recording
+            let samples = data.recorder.as_mut().unwrap().stop_recording();
+
+            // Transcribe in background thread
+            let app_handle = app.clone();
+            let whisper_path = data.whisper_model_path.clone();
+            let cleanup_path = data.cleanup_model_path.clone();
+
+            // Get auto_paste setting
+            let auto_paste = with_state(|s| s.settings.lock().unwrap().auto_paste);
+
+            // Emit status change to transcribing
+            let _ = app.emit("status", AppStatus::Transcribing);
+
+            spawn(async move {
+                if let Some(path) = whisper_path {
+                    match transcribe_audio(&samples, &path) {
+                        Ok(text) => {
+                            let cleaned = if !text.trim().is_empty() {
+                                clean_text(&text, cleanup_path.as_ref()).unwrap_or(text.clone())
+                            } else {
+                                text
+                            };
+
+                            let _ = app_handle.emit("transcript", cleaned.clone());
+
+                            // Auto-paste if enabled
+                            if auto_paste {
+                                // Try to create a paster and paste the text
+                                match Paster::new() {
+                                    Ok(mut paster) => {
+                                        if let Err(e) = paster.paste_text(&cleaned) {
+                                            log::warn!("Failed to paste text: {}", e);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to create paster for auto-paste: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = app_handle.emit("error", format!("Transcription failed: {}", e));
+                        }
+                    }
+                } else {
+                    let _ = app_handle.emit("error", "No whisper model found".to_string());
                 }
-            }
-        }
-    }
 
-    String::new()
+                // Set status back to Idle and emit
+                let _ = app_handle.emit("status", AppStatus::Idle);
+            });
+
+            Ok("stopped".to_string())
+        } else {
+            // Start recording
+            let recorder = AudioRecorder::new().map_err(|e| e.to_string())?;
+            recorder.start_recording(None).map_err(|e| e.to_string())?;
+            data.recorder = Some(recorder);
+
+            // Emit status change to recording
+            let _ = app.emit("status", AppStatus::Recording);
+            Ok("recording".to_string())
+        }
+    })
 }
 
-/// Resolve the Whisper model file.
-///
-/// Candidates are checked in order; the first existing file wins.
-/// Bundled layouts (release builds):
-///   macOS:   VoiceFlow.app/Contents/Resources/models/ggml-base.bin
-///   Windows: models/ggml-base.bin (NSIS/MSI install dir)
-///   Linux:   ../share/voiceflow/models/ggml-base.bin (AppImage/deb)
-/// Dev layouts (binary in src-tauri/target/{debug,release}):
-///   src-tauri/models/ggml-base.bin via ../../models/ggml-base.bin
-/// Works on macOS, Windows, and Linux.
-fn default_model_path() -> PathBuf {
-    if let Ok(exe) = current_exe() {
-        if let Some(dir) = exe.parent() {
-            for cand in [
-                // Windows NSIS/MSI install dir and Linux AppImage/deb install dir
-                dir.join("models/ggml-base.bin"),
-                // macOS bundled .app layout: Contents/Resources/models/ggml-base.bin
-                dir.join("../Resources/models/ggml-base.bin"),
-                // Windows NSIS installer layout (models next to the parent dir)
-                dir.join("../models/ggml-base.bin"),
-                // Linux AppImage layout: ../share/voiceflow/models/ggml-base.bin
-                dir.join("../share/voiceflow/models/ggml-base.bin"),
-                // Dev mode: binary at src-tauri/target/debug,
-                // .. -> target, ../.. -> src-tauri, then models/:
-                //   src-tauri/models/ggml-base.bin
-                dir.join("../../models/ggml-base.bin"),
-                // Alt dev layout: models/ at the repo/project root
-                dir.join("../../../models/ggml-base.bin"),
-            ] {
-                if cand.exists() {
-                    eprintln!("[VoiceFlow] using Whisper model: {}", cand.display());
-                    return cand;
-                }
-            }
+fn transcribe_audio(samples: &[f32], model_path: &Path) -> Result<String, String> {
+    let mut whisper = WhisperContext::new(model_path)
+        .map_err(|e| e.to_string())?;
+
+    let params = WhisperParams::default();
+    whisper.transcribe(samples, &params)
+        .map_err(|e| e.to_string())
+}
+
+fn clean_text(text: &str, model_path: Option<&PathBuf>) -> Result<String, String> {
+    match model_path {
+        Some(path) if !path.as_path().to_string_lossy().is_empty() && path.exists() => {
+            let mut cleaner = LlamaContext::new(path)
+                .map_err(|e| format!("Failed to init cleanup model: {}", e))?;
+            cleaner.clean_text(text, &cleanup::cleaner::CleanupParams::default())
+                .map_err(|e| e.to_string())
         }
+        _ => Ok(text.to_string()),
     }
-    // Final fallback: relative to the current working directory.
-    PathBuf::from("models/ggml-base.bin")
 }
 
 #[tauri::command]
-fn toggle_recording(state: tauri::State<AppState>) -> Result<String, String> {
-    state.toggle()
+fn get_settings() -> state::AppSettings {
+    with_state(|s| s.settings.lock().unwrap().clone())
 }
 
 #[tauri::command]
-fn get_config(state: tauri::State<AppState>) -> Result<Config, String> {
-    Ok(state.config.lock().unwrap().clone())
-}
-
-/// Persist the config as JSON in the OS app-config dir
-/// (~/Library/Application Support on macOS, %APPDATA% on Windows).
-fn config_file(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|dir| dir.join("config.json"))
-}
-
-/// Read the whole config.json as a JSON object. Returns `serde_json::Value::Null`
-/// if the file is missing or unreadable. The file layout is:
-///   { "config": {...Config}, "whisperflow": {...WhisperFlowConfig} }
-fn read_config_json(app: &tauri::AppHandle) -> serde_json::Value {
-    if let Some(path) = config_file(app) {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                return v;
-            }
-        }
-    }
-    serde_json::Value::Null
-}
-
-/// Atomically replace a section of config.json while preserving the others.
-fn patch_config_json(app: &tauri::AppHandle, section: &str, value: &serde_json::Value) {
-    let mut root = read_config_json(app);
-    if !root.is_object() {
-        root = serde_json::json!({});
-    }
-    root[section] = value.clone();
-    if let Some(path) = config_file(app) {
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(&root) {
-            let _ = std::fs::write(&path, json);
-        }
-    }
-}
-
-fn load_config(app: &tauri::AppHandle) -> Config {
-    read_config_json(app)
-        .get("config")
-        .and_then(|c| serde_json::from_value::<Config>(c.clone()).ok())
-        .unwrap_or_else(Config::default)
-}
-
-fn save_config(app: &tauri::AppHandle, cfg: &Config) {
-    let v = serde_json::to_value(cfg).unwrap_or(serde_json::Value::Null);
-    patch_config_json(app, "config", &v);
-}
-
-fn load_whisperflow_config(app: &tauri::AppHandle) -> WhisperFlowConfig {
-    read_config_json(app)
-        .get("whisperflow")
-        .and_then(|c| serde_json::from_value::<WhisperFlowConfig>(c.clone()).ok())
-        .unwrap_or_else(WhisperFlowConfig::default)
-}
-
-fn save_whisperflow_config(app: &tauri::AppHandle, cfg: &WhisperFlowConfig) {
-    let v = serde_json::to_value(cfg).unwrap_or(serde_json::Value::Null);
-    patch_config_json(app, "whisperflow", &v);
+fn update_settings(settings: state::AppSettings) -> Result<(), String> {
+    with_state(|s| {
+        *s.settings.lock().map_err(|e| e.to_string())? = settings;
+        Ok(())
+    })
 }
 
 #[tauri::command]
-fn update_config(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-    cfg: Config,
-) -> Result<(), String> {
-    *state.config.lock().unwrap() = cfg.clone();
-    save_config(&app, &cfg);
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// WhisperFlow streaming commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-async fn start_streaming(
-    app: tauri::AppHandle,
-    wf_state: tauri::State<'_, WhisperFlowState>,
-) -> Result<String, String> {
-    let config = wf_state.config.lock().unwrap().clone();
-
-    if config.api_key.is_empty() {
-        return Err("No Groq API key configured. Set GROQ_API_KEY in Settings.".into());
-    }
-
-    let sender = whisperflow::start_engine(config, app);
-
-    // Store the sender so we can send audio chunks to it
-    *wf_state.sender.lock().unwrap() = Some(sender);
-
-    Ok("Streaming engine started".into())
+fn get_status() -> AppStatus {
+    with_state(|s| s.status.lock().unwrap().clone())
 }
 
 #[tauri::command]
-async fn stop_streaming(
-    wf_state: tauri::State<'_, WhisperFlowState>,
-) -> Result<String, String> {
-    // Clone sender out of the lock before awaiting
-    let sender_opt = wf_state.sender.lock().unwrap().take();
-    if let Some(sender) = sender_opt {
-        let _ = sender.send(whisperflow::AudioMessage::Shutdown).await;
-        Ok("Streaming engine stopped".into())
+fn list_microphones() -> Result<Vec<String>, String> {
+    let recorder = AudioRecorder::new().map_err(|e| e.to_string())?;
+    recorder.list_devices().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
     } else {
-        Ok("Streaming engine was not running".into())
+        // Create main window if it doesn't exist
+        let window = WebviewWindowBuilder::new(
+            &app,
+            "main",
+            WebviewUrl::App("index.html".into())
+        )
+        .title("VoiceFlow")
+        .inner_size(420.0, 560.0)
+        .min_inner_size(380.0, 480.0)
+        .resizable(true)
+        .center()
+        .decorations(true)
+        .shadow(true)
+        .skip_taskbar(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+        
+        window.set_focus().map_err(|e| e.to_string())?;
     }
+    Ok(())
 }
 
 #[tauri::command]
-async fn send_audio_chunk(
-    wf_state: tauri::State<'_, WhisperFlowState>,
-    samples: Vec<f32>,
-) -> Result<(), String> {
-    // Clone sender out of the lock before awaiting
-    let sender_opt = wf_state.sender.lock().unwrap().clone();
-    if let Some(sender) = sender_opt {
-        sender
-            .send(whisperflow::AudioMessage::Chunk(samples))
-            .await
-            .map_err(|e| format!("Failed to send audio: {e}"))
+fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn toggle_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            window.hide().map_err(|e| e.to_string())?;
+        } else {
+            window.show().map_err(|e| e.to_string())?;
+            window.set_focus().map_err(|e| e.to_string())?;
+        }
     } else {
-        Err("Streaming engine not running".into())
+        // Create main window if it doesn't exist
+        let window = WebviewWindowBuilder::new(
+            &app,
+            "main",
+            WebviewUrl::App("index.html".into())
+        )
+        .title("VoiceFlow")
+        .inner_size(420.0, 560.0)
+        .min_inner_size(380.0, 480.0)
+        .resizable(true)
+        .center()
+        .decorations(true)
+        .shadow(true)
+        .skip_taskbar(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+        
+        window.set_focus().map_err(|e| e.to_string())?;
     }
-}
-
-#[tauri::command]
-fn edit_transcript(
-    wf_state: tauri::State<'_, WhisperFlowState>,
-    text: String,
-) -> Result<String, String> {
-    let config = wf_state.editor_config.lock().unwrap().clone();
-    Ok(editor::edit_transcript(&text, &config))
-}
-
-#[tauri::command]
-fn get_whisperflow_config(
-    wf_state: tauri::State<'_, WhisperFlowState>,
-) -> Result<WhisperFlowConfig, String> {
-    Ok(wf_state.config.lock().unwrap().clone())
-}
-
-#[tauri::command]
-fn update_whisperflow_config(
-    app: tauri::AppHandle,
-    wf_state: tauri::State<'_, WhisperFlowState>,
-    config: WhisperFlowConfig,
-) -> Result<(), String> {
-    *wf_state.config.lock().unwrap() = config.clone();
-    save_whisperflow_config(&app, &config);
     Ok(())
 }
 
-#[tauri::command]
-fn get_editor_config(
-    wf_state: tauri::State<'_, WhisperFlowState>,
-) -> Result<EditorConfig, String> {
-    Ok(wf_state.editor_config.lock().unwrap().clone())
-}
 
 #[tauri::command]
-fn update_editor_config(
-    wf_state: tauri::State<'_, WhisperFlowState>,
-    config: EditorConfig,
-) -> Result<(), String> {
-    *wf_state.editor_config.lock().unwrap() = config;
-    Ok(())
-}
-
-fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    // Use CmdOrCtrl for cross-platform shortcuts (⌘ on macOS, Ctrl on Windows/Linux)
-    let show = MenuItem::with_id(app, "show", "Show VoiceFlow", true, None::<&str>)?;
-    let toggle = MenuItem::with_id(app, "toggle", "Start / Stop Recording", true, Some("CmdOrCtrl+Shift+V"))?;
-    let separator1 = PredefinedMenuItem::separator(app)?;
-    let stream = MenuItem::with_id(app, "stream", "Toggle Streaming (Groq)", true, Some("CmdOrCtrl+Shift+S"))?;
-    let separator2 = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit VoiceFlow", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &toggle, &separator1, &stream, &separator2, &quit])?;
-    let icon =
-        Image::from_bytes(include_bytes!("../icons/tray.png")).expect("failed to load tray icon");
-    TrayIconBuilder::with_id("voiceflow-tray")
-        .icon(icon)
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
-            "toggle" => {
-                if let Some(s) = app.try_state::<AppState>() {
-                    let _ = s.toggle();
-                }
-            }
-            "stream" => {
-                // Emit event so frontend can toggle streaming mode
-                let _ = app.emit("toggle-streaming", ());
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .build(app)?;
+fn create_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "main",
+        WebviewUrl::App("index.html".into())
+    )
+    .title("VoiceFlow")
+    .inner_size(420.0, 560.0)
+    .min_inner_size(380.0, 480.0)
+    .resizable(true)
+    .center()
+    .decorations(true)
+    .shadow(true)
+    .skip_taskbar(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    
+    window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
 
 fn main() {
+    env_logger::init();
+
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _sc, _event| {
-                    // CmdOrCtrl+Shift+V toggles recording on any platform
-                    if let Some(s) = app.try_state::<AppState>() {
-                        let _ = s.toggle();
-                    }
-                })
-                .build(),
-        )
-        .setup(|app| {
-            // Load the Groq API key with robust precedence: process env ->
-            // dotenv from CWD -> candidate .env paths -> known project root.
-            let env_api_key = resolve_groq_api_key();
-
-            let persisted = load_config(app.handle());
-            app.manage(AppState::with_config(app.handle().clone(), persisted));
-
-            // Initialize WhisperFlow streaming state. A non-empty persisted
-            // api_key (user-entered in Settings) OVERRIDES the env-resolved key;
-            // otherwise fall back to the env var / .env value.
-            let mut wf_config = load_whisperflow_config(app.handle());
-            if wf_config.api_key.trim().is_empty() {
-                wf_config.api_key = env_api_key;
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_os::init())
+        .on_window_event(|_, event| {
+            // Handle window focus events to ensure it appears when clicked from dock
+            use tauri::WindowEvent;
+            if let WindowEvent::Focused(is_focused) = event {
+                if *is_focused {
+                    // Window gained focus - could show or bring to front
+                }
             }
-            app.manage(WhisperFlowState {
-                sender: Mutex::new(None),
-                config: Mutex::new(wf_config),
-                editor_config: Mutex::new(EditorConfig::default()),
+        })
+        .setup(|app| {
+            // Try to locate models
+            if let Ok(dir) = ModelManager::models_dir() {
+                with_app_data(|data| {
+                    // Look for available whisper models
+                    let models = vec![
+                        "ggml-tiny.bin",
+                        "ggml-base.bin",
+                        "ggml-small.bin",
+                        "ggml-medium.en.bin",
+                    ];
+                    for model in models {
+                        let path = dir.join(model);
+                        if path.exists() {
+                            data.whisper_model_path = Some(path);
+                            break; // Use first available
+                        }
+                    }
+
+                    // Check for cleanup model
+                    let cleanup_path = dir.join("qwen3.5-0.8b-q4_k_m.gguf");
+                    if cleanup_path.exists() {
+                        data.cleanup_model_path = Some(cleanup_path);
+                    }
+                });
+            }
+
+            // Setup tray icon (menu bar)
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = setup_tray(&app_handle).await {
+                    log::error!("Failed to setup tray: {}", e);
+                }
             });
 
-            // Register global shortcut — CmdOrCtrl works on macOS AND Windows
-            let _ = app.global_shortcut().register("CmdOrCtrl+Shift+V");
-            build_tray(app)?;
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
+            // Initialize paster for clipboard operations
+            if let Ok(paster) = Paster::new() {
+                with_app_data(|data| {
+                    data.paster = Some(paster);
+                });
             }
+
+            // Register global hotkey (Cmd+Space on macOS, Ctrl+Space on Windows/Linux) - works system-wide
+            {
+                let app_cloned = app.handle().clone();
+                let mut hm = HotkeyManager::new();
+
+                if let Ok(_) = hm.register(app.handle(), move |_, _, _| {
+                    // Toggle recording on shortcut activation - works globally
+                    let status = with_state(|s| s.status.lock().unwrap().clone());
+                    if status == AppStatus::Idle {
+                        // Emit event for frontend to handle (both main and overlay windows)
+                        let _ = app_cloned.emit("hotkey_press", ());
+                    }
+                }) {
+                    with_app_data(|data| {
+                        data.hotkey_manager = Some(hm);
+                    });
+                }
+            }
+
+            // Ensure overlay window is visible and positioned correctly
+            if let Some(overlay_window) = app.get_webview_window("mic-overlay") {
+                // Window is already configured in tauri.conf.json to be visible on startup
+                // Just ensure it's on top
+                let _ = overlay_window.set_always_on_top(true);
+                let _ = overlay_window.set_focus(); // Don't steal focus, just ensure visibility
+            }
+
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Hide to the system tray instead of quitting (works on all platforms)
-                api.prevent_close();
-                let _ = window.hide();
-            }
         })
         .invoke_handler(tauri::generate_handler![
             toggle_recording,
-            get_config,
-            update_config,
-            // WhisperFlow streaming commands
-            start_streaming,
-            stop_streaming,
-            send_audio_chunk,
-            edit_transcript,
-            get_whisperflow_config,
-            update_whisperflow_config,
-            get_editor_config,
-            update_editor_config,
+            get_models,
+            download_model,
+            get_settings,
+            update_settings,
+            get_status,
+            list_microphones,
+            show_main_window,
+            hide_main_window,
+            toggle_main_window,
+            create_main_window,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running VoiceFlow");
+        .expect("error while running tauri application");
+}
+
+/// Setup system tray icon
+async fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let quit_item = MenuItem::with_id(app, "quit", "Quit VoiceFlow", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&quit_item])?;
+
+    // Try to load tray icon from bundled resources
+    let tray_icon = app
+        .path()
+        .resolve("tray.png", tauri::path::BaseDirectory::Resource)
+        .ok()
+        .and_then(|f| {
+            Image::from_path(&f).ok()
+        })
+        .or_else(|| {
+            // Fallback: create a simple 16x16 RGBA image (blue pixel)
+            let mut rgba = Vec::new();
+            for _ in 0..(16 * 16) {
+                rgba.push(0);
+                rgba.push(0);
+                rgba.push(0);
+                rgba.push(255);
+            }
+            Image::from_bytes(&rgba).ok()
+        });
+
+    let tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .icon(tray_icon.expect("Failed to create tray icon"))
+        .build(app)?;
+
+    Ok(())
 }
