@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Combine
 import Foundation
@@ -6,30 +7,26 @@ import Foundation
 //
 // Owns the full dictation pipeline and wires it into AppState:
 //
-//   hold-to-talk start → AudioCaptureEngine (16 kHz mono + level metering)
-//   release            → WhisperEngine (English transcription, off-main)
-//                      → TextPostProcessor → AppState.finishTranscription
-//
-// MainActor-isolated: every UI-facing mutation happens here; heavy work is
-// pushed down into the audio engine's queues and WhisperEngine's serial queue.
+//   hold Control / hands-free → AudioCaptureEngine (16 kHz mono, 400 ms pre-roll)
+//   release / silence timeout → SpeechTranscribing (WhisperKit, whisper.cpp fallback)
+//                             → TextPostProcessor → TextPaster
 
 @MainActor
 final class DictationCoordinator: ObservableObject {
 
     // MARK: Published
 
-    /// Raw whisper output before post-processing (useful for debugging/Settings).
     @Published private(set) var lastRawTranscription: String?
-
-    /// Set by the text-injection task to paste finished transcripts into the
-    /// frontmost app when `settings.autoPasteEnabled` is on.
+    @Published private(set) var loadedModelID: String?
     var onTranscriptionReady: ((String) -> Void)?
+    var onHandsFreeChanged: ((Bool) -> Void)?
+    var onHotkeyBindingChange: ((KeyChord) -> Void)?
 
     // MARK: Pipeline components
 
     private(set) var audio = AudioCaptureEngine()
     private(set) var modelManager = ModelManager()
-    private(set) var engine: WhisperEngine?
+    private(set) var speechEngine: (any SpeechTranscribing)?
 
     // MARK: Dependencies
 
@@ -40,21 +37,13 @@ final class DictationCoordinator: ObservableObject {
 
     private var tickerTask: Task<Void, Never>?
     private var recordingStartedAt: Date?
+    private var loadGeneration = 0
 
-    /// Minimum samples at 16 kHz below which a recording counts as silence.
-    private let minimumSampleCount = 4800
-
-    /// Bridges audio-queue levels to the main actor without violating strict
-    /// concurrency: the engine's tap requires a `@Sendable` handler, so only a
-    /// `@unchecked Sendable` weak-reference box crosses that boundary; the
-    /// MainActor-isolated AppState is unwrapped *inside* the main-actor task.
     private final class WeakMainActorRef<Object: AnyObject>: @unchecked Sendable {
         private weak var object: Object?
         init(_ object: Object) {
             self.object = object
         }
-
-        /// Read from the main actor.
         var value: Object? { object }
     }
 
@@ -80,21 +69,9 @@ final class DictationCoordinator: ObservableObject {
 
     // MARK: Bootstrap
 
-    /// Ensures the model exists locally, creates the engine, and hooks the
-    /// AppState start/stop events. Idempotent; safe to call from `.task`.
     func bootstrap() async {
-        guard engine == nil else { return }
-
-        guard let modelURL = await modelManager.ensureModel(settings.modelName, appState: appState) else {
-            return // appState.modelStatus already carries the failure reason
-        }
-
-        do {
-            // Model loading is heavy — performed off the main thread inside create().
-            engine = try await WhisperEngine.create(modelPath: modelURL.path)
-        } catch {
-            appState.modelStatus = .failed("Could not load model: \(error.localizedDescription)")
-            return
+        if speechEngine == nil {
+            await reloadSpeechEngine()
         }
 
         appState.onStartHook = { [weak self] in
@@ -105,94 +82,258 @@ final class DictationCoordinator: ObservableObject {
             guard let self else { return }
             Task { await self.finishRecording() }
         }
+        appState.onCancelHook = { [weak self] in
+            guard let self else { return }
+            Task { await self.cancelRecording() }
+        }
+
+        try? await armMicrophone()
+    }
+
+    func applyHotkey() {
+        onHotkeyBindingChange?(settings.hotkeyMode.chord)
+    }
+
+    func selectModel(_ modelID: String) async {
+        guard !appState.isRecording else { return }
+        let choice = SpeechModelCatalog.modelChoice(modelID, keeping: settings.languageCode)
+        let resolved = SpeechModelCatalog.whisperKitVariant(settingsName: choice.model, hardwareName: nil)
+        settings.modelName = choice.model
+        settings.languageCode = choice.language
+        if loadedModelID == resolved, speechEngine != nil {
+            return
+        }
+        await reloadSpeechEngine()
+    }
+
+    func selectLanguage(_ languageCode: String) async {
+        guard !appState.isRecording else { return }
+        let choice = SpeechModelCatalog.languageChoice(languageCode, keeping: settings.modelName)
+        let modelChanged = choice.model != SpeechModelCatalog.whisperKitVariant(
+            settingsName: settings.modelName,
+            hardwareName: nil
+        )
+        settings.modelName = choice.model
+        settings.languageCode = choice.language
+        if modelChanged {
+            await reloadSpeechEngine()
+        }
+    }
+
+    func reloadSpeechEngine() async {
+        guard !appState.isRecording else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
+        let variant = SpeechModelCatalog.whisperKitVariant(
+            settingsName: settings.modelName,
+            hardwareName: appState.hardwareProfile?.recommendedWhisperModel
+        )
+        appState.modelStatus = .downloading(0)
+
+        let stateRef = WeakMainActorRef(appState)
+        do {
+            let engine = try await WhisperKitSpeechEngine.load(variant: variant) { fraction in
+                let ref = stateRef
+                let token = generation
+                Task { @MainActor in
+                    guard token == self.loadGeneration else { return }
+                    ref.value?.modelStatus = .downloading(min(max(fraction, 0), 1))
+                }
+            } onWillLoad: {
+                let ref = stateRef
+                let token = generation
+                Task { @MainActor in
+                    guard token == self.loadGeneration else { return }
+                    ref.value?.modelStatus = .loading
+                }
+            }
+            guard generation == loadGeneration else { return }
+            speechEngine = engine
+            loadedModelID = variant
+            appState.modelStatus = .ready
+        } catch {
+            let ggmlName = SpeechModelCatalog.ggmlName(for: variant)
+            guard let modelURL = await modelManager.ensureModel(ggmlName, appState: appState) else {
+                return
+            }
+            guard generation == loadGeneration else { return }
+            do {
+                speechEngine = try await WhisperEngine.create(modelPath: modelURL.path)
+                loadedModelID = variant
+                appState.modelStatus = .ready
+            } catch {
+                speechEngine = nil
+                loadedModelID = nil
+                appState.modelStatus = .failed("Could not load model: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: Recording
 
-    func beginRecording() async {
-        guard appState.phase == .recording, engine != nil, !audio.isRunning else { return }
+    func beginRecording(handsFree: Bool = false) async {
+        if appState.phase == .idle {
+            appState.startDictation(handsFree: handsFree)
+        }
+        guard appState.isRecording, speechEngine != nil, !audio.isCapturingUtterance else { return }
 
-        // Microphone permission.
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             break
         case .notDetermined:
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
             guard granted else {
-                PermissionManager.shared.refreshAll()
-                appState.phase = .idle
+                notePermissionFailure()
                 return
             }
         default:
-            PermissionManager.shared.refreshAll()
-            appState.phase = .idle
+            notePermissionFailure()
             return
         }
 
         do {
-            let pump = MainActorLevelPump(appState: appState)
-            try audio.start(onLevel: { level in
-                pump.emit(level)
-            })
+            try await armMicrophone()
+            audio.beginUtterance()
         } catch {
-            PermissionManager.shared.refreshAll()
-            appState.phase = .idle
+            notePermissionFailure()
             return
         }
 
         recordingStartedAt = Date()
         startTicker()
+        onHandsFreeChanged?(appState.isHandsFree)
+        if settings.soundFeedbackEnabled {
+            NSSound(named: "Tink")?.play()
+        }
     }
 
-    func finishRecording() async {
+    private func armMicrophone() async throws {
+        let pump = MainActorLevelPump(appState: appState)
+        let weakSelf = WeakMainActorRef(self)
+        try audio.activateStandby(
+            onLevel: { level in
+                pump.emit(level)
+            },
+            onVadEvent: { event in
+                Task { @MainActor in
+                    weakSelf.value?.handleVadEvent(event)
+                }
+            },
+            silenceTimeoutSeconds: 2.0
+        )
+    }
+
+    private func notePermissionFailure() {
+        PermissionManager.shared.refreshAll()
+        appState.phase = .idle
+        onHandsFreeChanged?(false)
+    }
+
+    public func toggleHandsFree() async {
+        if appState.isRecording {
+            await finishRecording()
+        } else {
+            await beginRecording(handsFree: true)
+        }
+    }
+
+    public func cancelRecording() async {
+        tickerTask?.cancel()
+        tickerTask = nil
+        audio.stopAndReturnSamples()
+        recordingStartedAt = nil
+        appState.cancelDictation()
+        onHandsFreeChanged?(false)
+    }
+
+    public func finishRecording(trailingSilenceSeconds: Double = 0.0) async {
         tickerTask?.cancel()
         tickerTask = nil
 
-        let samples = audio.stopAndReturnSamples()
+        let samples = audio.stopAndReturnSamples(truncateSilenceSeconds: trailingSilenceSeconds)
         let duration = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
         recordingStartedAt = nil
 
-        // Accidental taps / pure silence: skip transcription entirely.
-        guard duration >= settings.minRecordingDuration,
-              samples.count >= minimumSampleCount else {
+        guard DictationGate.shouldTranscribe(
+            sampleCount: samples.count,
+            holdDuration: duration,
+            minimumDuration: settings.minRecordingDuration
+        ) else {
             appState.phase = .idle
+            onHandsFreeChanged?(false)
             return
         }
 
-        guard let engine else {
+        guard let speechEngine else {
             appState.phase = .idle
+            onHandsFreeChanged?(false)
             return
         }
+
+        appState.phase = .transcribing
+        onHandsFreeChanged?(false)
 
         do {
-            // Transcription runs on WhisperEngine's background serial queue;
-            // we simply await the result here on the main actor.
-            let rawText = try await engine.transcribe(samples: samples)
-            let cleaned = TextPostProcessor.process(rawText)
+            let language = SpeechModelCatalog.isEnglishOnly(loadedModelID ?? settings.modelName)
+                ? "en"
+                : settings.languageCode
+            let rawText = try await speechEngine.transcribe(
+                samples: samples,
+                languageCode: language == SpeechModelCatalog.automaticLanguage ? nil : language
+            )
+            let cleaned = TextPostProcessor.process(
+                rawText,
+                removeFillers: settings.cleanupMode != .none
+            )
 
             lastRawTranscription = rawText
-            appState.finishTranscription(text: cleaned, duration: duration)
+            guard DictationGate.shouldPaste(cleaned) else {
+                appState.phase = .idle
+                return
+            }
 
-            if settings.autoPasteEnabled, !cleaned.isEmpty {
+            appState.finishTranscription(
+                text: cleaned,
+                duration: duration,
+                saveHistory: settings.historyEnabled
+            )
+            if settings.soundFeedbackEnabled {
+                NSSound(named: "Pop")?.play()
+            }
+
+            if settings.autoPasteEnabled {
                 onTranscriptionReady?(cleaned)
             }
         } catch {
-            // Reset UI without recording a failed attempt as history.
             lastRawTranscription = nil
-            appState.finishTranscription(text: "", duration: duration)
+            appState.phase = .idle
+        }
+    }
+
+    private func handleVadEvent(_ event: VadEvent) {
+        switch event {
+        case .speechStarted:
+            appState.resetSilenceCountdown()
+        case .silenceCountdown(let remaining, let progress):
+            if appState.isHandsFree {
+                appState.updateSilenceCountdown(remainingSeconds: remaining, progress: progress)
+            }
+        case .silenceTimeout(let trailingSilence):
+            if appState.isHandsFree {
+                appState.resetSilenceCountdown()
+                Task { await self.finishRecording(trailingSilenceSeconds: trailingSilence) }
+            }
         }
     }
 
     // MARK: Ticker
 
-    /// 10 Hz elapsed-time updates for the recording UI. Runs as a main-actor
-    /// task so no run-loop/timer threading subtleties apply.
     private func startTicker() {
         let startedAt = recordingStartedAt ?? Date()
         tickerTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
-                guard let self, self.appState.phase == .recording else { break }
+                guard let self, self.appState.isRecording else { break }
                 self.appState.tick(elapsed: Date().timeIntervalSince(startedAt))
             }
         }

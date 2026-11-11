@@ -4,10 +4,52 @@ import Combine
 // MARK: - Types
 
 /// How dictation is triggered.
-enum HotkeyMode: String, Codable {
-    case globeKey       // Fn / Globe key
-    case rightCommand   // Right Command key
-    case controlV       // Control+V (Ghost Pepper style)
+enum HotkeyMode: String, Codable, CaseIterable, Identifiable {
+    case control
+    case optionSpace
+    case rightCommand
+    case globeKey
+    case controlV
+
+    var id: String { rawValue }
+
+    /// Choices shown on the dashboard. Older stored values still decode.
+    static let dashboardChoices: [HotkeyMode] = [.control, .optionSpace, .rightCommand]
+
+    var dashboardValue: HotkeyMode {
+        switch self {
+        case .optionSpace:
+            return .optionSpace
+        case .rightCommand:
+            return .rightCommand
+        case .control, .globeKey, .controlV:
+            return .control
+        }
+    }
+
+    var menuLabel: String {
+        switch dashboardValue {
+        case .control:
+            return "Control"
+        case .optionSpace:
+            return "Option+Space"
+        case .rightCommand:
+            return "Right Command"
+        case .globeKey, .controlV:
+            return "Control"
+        }
+    }
+
+    var chord: KeyChord {
+        switch dashboardValue {
+        case .optionSpace:
+            return .optionSpace
+        case .rightCommand:
+            return KeyChord(.rightCommand)
+        case .control, .globeKey, .controlV:
+            return .controlHold
+        }
+    }
 }
 
 // MARK: - AppSettings
@@ -31,16 +73,13 @@ final class AppSettings: ObservableObject {
         static let soundFeedbackEnabled = "settings.soundFeedbackEnabled"
         static let historyEnabled = "settings.historyEnabled"
         static let minRecordingDuration = "settings.minRecordingDuration"
+        static let cleanupMode = "settings.cleanupMode"
     }
 
-    /// Downloadable English-only whisper.cpp models offered in Settings.
-    static let availableModels: [(id: String, label: String, sizeLabel: String)] = [
-        ("ggml-tiny.en", "Tiny (English) · Fastest", "~75 MB"),
-        ("ggml-base.en", "Base (English) · Recommended", "~148 MB"),
-        ("ggml-small.en", "Small (English)", "~470 MB"),
-        ("ggml-medium.en", "Medium (English) · Best", "~1.5 GB"),
-        ("ggml-large-v3", "Large v3 (Multilingual) · Production", "~3 GB")
-    ]
+    /// WhisperKit models offered in Settings and the dashboard.
+    static let availableModels: [(id: String, label: String, sizeLabel: String)] = SpeechModelCatalog.models.map {
+        ($0.id, "\($0.title) · \($0.detail)", $0.size)
+    }
 
     // MARK: Published settings
 
@@ -74,27 +113,34 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(minRecordingDuration, forKey: Key.minRecordingDuration) }
     }
 
+    /// Offline cleanup. Filler removal is local. Other modes wait for the on-device LLM.
+    @Published var cleanupMode: CleanupMode {
+        didSet { defaults.set(cleanupMode.rawValue, forKey: Key.cleanupMode) }
+    }
+
     // MARK: Init
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
         defaults.register(defaults: [
-            Key.hotkeyMode: HotkeyMode.globeKey.rawValue,
+            Key.hotkeyMode: HotkeyMode.control.rawValue,
             Key.languageCode: "en",
-            Key.modelName: "ggml-base.en",
+            Key.modelName: SpeechModelCatalog.defaultVariant,
             Key.autoPasteEnabled: true,
             Key.soundFeedbackEnabled: true,
             Key.historyEnabled: true,
-            Key.minRecordingDuration: 0.3
+            Key.minRecordingDuration: 0.3,
+            Key.cleanupMode: CleanupMode.fillers.rawValue
         ])
 
-        hotkeyMode = HotkeyMode(rawValue: defaults.string(forKey: Key.hotkeyMode) ?? "") ?? .globeKey
+        hotkeyMode = HotkeyMode(rawValue: defaults.string(forKey: Key.hotkeyMode) ?? "") ?? .control
         languageCode = defaults.string(forKey: Key.languageCode) ?? "en"
-        modelName = defaults.string(forKey: Key.modelName) ?? "ggml-base.en"
+        modelName = defaults.string(forKey: Key.modelName) ?? SpeechModelCatalog.defaultVariant
         autoPasteEnabled = defaults.bool(forKey: Key.autoPasteEnabled)
         soundFeedbackEnabled = defaults.bool(forKey: Key.soundFeedbackEnabled)
         historyEnabled = defaults.bool(forKey: Key.historyEnabled)
         minRecordingDuration = defaults.double(forKey: Key.minRecordingDuration)
+        cleanupMode = CleanupMode(rawValue: defaults.string(forKey: Key.cleanupMode) ?? "") ?? .fillers
     }
 }

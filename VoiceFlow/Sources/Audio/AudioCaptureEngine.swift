@@ -1,28 +1,20 @@
 import AVFoundation
 import Foundation
+import os
 
 // MARK: - AudioCaptureEngine
 //
 // Captures microphone audio with AVAudioEngine and converts every input buffer
 // to 16 kHz mono Float32 — the exact sample format whisper.cpp expects.
-//
-// Threading model:
-// - `engine` and the tap are owned by this class; tap callbacks arrive serially
-//   on AVFoundation's internal audio queue.
-// - Accumulated samples are guarded by an internal serial queue (`stateQueue`).
-// - `onLevel` is invoked from the audio queue; it is marked `@Sendable` so the
-//   caller (DictationCoordinator) is forced to hop to the main actor itself.
+// Also integrates the VoiceActivityDetector for acoustic silence detection.
 
 final class AudioCaptureEngine: @unchecked Sendable {
 
     // MARK: Errors
 
     enum CaptureError: LocalizedError {
-        /// Microphone permission denied (or not yet granted).
         case microphoneDenied
-        /// No usable input hardware / empty hardware format.
         case noInputHardware
-        /// Converter or engine failure with a descriptive message.
         case engineFailure(String)
 
         var errorDescription: String? {
@@ -39,31 +31,108 @@ final class AudioCaptureEngine: @unchecked Sendable {
 
     // MARK: Constants
 
-    /// Target sample rate for whisper.cpp (it resamples internally to 16 kHz mel).
     static let targetSampleRate: Double = 16_000
+    /// Audio kept before the key goes down, so the first syllable is not clipped.
+    static let preRollSeconds: Double = 0.4
 
     // MARK: State
 
     private let engine = AVAudioEngine()
-
-    /// Guards `convertedSamples`, `running`, and `tapActive`.
     private let stateQueue = DispatchQueue(label: "com.kennethaman.VoiceFlow.audio-capture")
+    private let captureFlag = OSAllocatedUnfairLock(initialState: false)
 
     private var convertedSamples: [Float] = []
+    private var ring = AudioRingBuffer(capacity: Int(targetSampleRate * preRollSeconds))
     private var running = false
     private var converter: AVAudioConverter?
+    private var onLevel: (@Sendable (Float) -> Void)?
+    private var onVad: (@Sendable (VadEvent) -> Void)?
+    public let vadDetector = VoiceActivityDetector()
 
     var isRunning: Bool {
         stateQueue.sync { running }
     }
 
+    var isCapturingUtterance: Bool {
+        captureFlag.withLock { $0 }
+    }
+
     // MARK: Lifecycle
 
-    /// Installs the input tap and starts the engine.
-    ///
-   /// Throws `CaptureError.microphoneDenied` unless microphone authorization
-    /// is already `.authorized` (the coordinator requests permission first).
-    func start(onLevel levelHandler: @escaping @Sendable (Float) -> Void) throws {
+    /// Opens the microphone and keeps a short ring of recent audio.
+    /// A later `start` copies that ring in as pre-roll. The tap stays installed
+    /// across takes so the next hold still has the leading audio.
+    func activateStandby(
+        onLevel levelHandler: @escaping @Sendable (Float) -> Void,
+        onVadEvent vadHandler: (@Sendable (VadEvent) -> Void)? = nil,
+        silenceTimeoutSeconds: Double = 2.0
+    ) throws {
+        onLevel = levelHandler
+        onVad = vadHandler
+        vadDetector.setSilenceTimeout(silenceTimeoutSeconds)
+        if isRunning { return }
+        try installTapAndStart()
+    }
+
+    func start(
+        onLevel levelHandler: @escaping @Sendable (Float) -> Void,
+        onVadEvent vadHandler: (@Sendable (VadEvent) -> Void)? = nil,
+        silenceTimeoutSeconds: Double = 2.0
+    ) throws {
+        try activateStandby(
+            onLevel: levelHandler,
+            onVadEvent: vadHandler,
+            silenceTimeoutSeconds: silenceTimeoutSeconds
+        )
+        beginUtterance()
+    }
+
+    func beginUtterance() {
+        vadDetector.reset()
+        // Set the flag before snapshotting. A buffer that arrives in between is
+        // queued on `stateQueue` and either lands in the ring (included by the
+        // snapshot) or is appended after the snapshot overwrites the utterance.
+        captureFlag.withLock { $0 = true }
+        stateQueue.sync {
+            convertedSamples = ring.snapshot()
+        }
+    }
+
+    /// Ends the current take and leaves the microphone open for the next pre-roll.
+    @discardableResult
+    func stopAndReturnSamples(truncateSilenceSeconds: Double = 0.0) -> [Float] {
+        captureFlag.withLock { $0 = false }
+        return stateQueue.sync {
+            defer { convertedSamples.removeAll(keepingCapacity: true) }
+            if truncateSilenceSeconds > 0 {
+                return VoiceActivityDetector.trimTrailingSilence(
+                    samples: convertedSamples,
+                    sampleRate: Self.targetSampleRate,
+                    trailingSilenceSeconds: truncateSilenceSeconds
+                )
+            }
+            return convertedSamples
+        }
+    }
+
+    func shutdown() {
+        captureFlag.withLock { $0 = false }
+        let wasRunning = isRunning
+        if wasRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning {
+                engine.stop()
+            }
+        }
+        converter = nil
+        stateQueue.sync {
+            running = false
+            convertedSamples.removeAll(keepingCapacity: false)
+            ring.reset()
+        }
+    }
+
+    private func installTapAndStart() throws {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw CaptureError.microphoneDenied
         }
@@ -91,11 +160,6 @@ final class AudioCaptureEngine: @unchecked Sendable {
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
-
-            // UI level metering: RMS scaled up for visibility on quiet mics.
-            let rms = Self.rmsLevel(of: buffer)
-            levelHandler(min(rms * 4, 1))
-
             self.appendConverted(buffer: buffer, using: converter)
         }
 
@@ -110,31 +174,14 @@ final class AudioCaptureEngine: @unchecked Sendable {
         }
     }
 
-    /// Removes the tap, stops the engine, and returns all samples captured
-    /// since `start(onLevel:)` (16 kHz mono Float32). Resets internal buffers.
-    @discardableResult
-    func stopAndReturnSamples() -> [Float] {
-        engine.inputNode.removeTap(onBus: 0)
-        if engine.isRunning {
-            engine.stop()
-        }
-        converter = nil
-        return stateQueue.sync {
-            running = false
-            defer { convertedSamples.removeAll(keepingCapacity: false) }
-            return convertedSamples
-        }
-    }
-
     // MARK: Conversion
 
-    /// Converts one hardware-format buffer to 16 kHz mono Float32 and appends
-    /// the result to the protected accumulator. Runs on the tap's audio queue;
-    /// `converter` is only ever touched from that serial queue.
-    private func appendConverted(buffer: AVAudioPCMBuffer, using converter: AVAudioConverter) {
+    private func appendConverted(
+        buffer: AVAudioPCMBuffer,
+        using converter: AVAudioConverter
+    ) {
         guard buffer.frameLength > 0 else { return }
 
-        // Capacity estimate for resampling + headroom for filter flush.
         let ratio = converter.outputFormat.sampleRate / max(buffer.format.sampleRate, 1)
         let capacity = max(AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024, 1024)
         guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: capacity) else {
@@ -159,8 +206,21 @@ final class AudioCaptureEngine: @unchecked Sendable {
         }
 
         let chunk = Array(UnsafeBufferPointer(start: channelData, count: Int(output.frameLength)))
+        let capturing = captureFlag.withLock { $0 }
         stateQueue.async {
-            self.convertedSamples.append(contentsOf: chunk)
+            self.ring.write(chunk)
+            if capturing {
+                self.convertedSamples.append(contentsOf: chunk)
+            }
+        }
+
+        guard capturing else { return }
+
+        if let onLevel {
+            onLevel(min(Self.rmsLevel(of: buffer) * 4, 1))
+        }
+        if let onVad, let event = vadDetector.processFrame(chunk) {
+            onVad(event)
         }
     }
 

@@ -39,7 +39,7 @@ struct SettingsView: View {
                             }
                         }
 
-                        Text("Press Control+V to start dictation. Release to transcribe and paste.")
+                        Text("Hold Control to dictate. Double-tap Control for hands-free. Escape cancels.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

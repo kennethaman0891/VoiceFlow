@@ -32,7 +32,7 @@ enum WhisperError: LocalizedError {
 // Model loading takes seconds (hundreds of MB), so prefer `create(modelPath:)`
 // which performs initialization off the main actor.
 
-final class WhisperEngine: @unchecked Sendable {
+final class WhisperEngine: SpeechTranscribing, @unchecked Sendable {
 
     /// Opaque `whisper_context *`. Freed in deinit via `whisper_free`.
     private let context: OpaquePointer
@@ -149,7 +149,8 @@ final class WhisperEngine: @unchecked Sendable {
     ///
     /// Hops to the internal serial queue, so calls from any isolation domain
     /// are safe; concurrent callers queue up behind each other.
-    func transcribe(samples: [Float]) async throws -> String {
+    func transcribe(samples: [Float], languageCode: String? = nil) async throws -> String {
+        _ = languageCode
         guard !samples.isEmpty else { return "" }
 
         return try await withCheckedThrowingContinuation { continuation in

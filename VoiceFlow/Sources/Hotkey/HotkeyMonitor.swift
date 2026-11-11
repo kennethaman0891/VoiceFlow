@@ -6,27 +6,29 @@ import IOKit.hidsystem
 // MARK: - PhysicalKey
 
 /// Represents a physical key on the keyboard using its keycode.
-struct PhysicalKey: Hashable, Equatable {
-    let keyCode: UInt16
-    let displayName: String
+public struct PhysicalKey: Hashable, Equatable, Sendable {
+    public let keyCode: UInt16
+    public let displayName: String
 
-    init(keyCode: UInt16) {
+    public init(keyCode: UInt16) {
         self.keyCode = keyCode
         self.displayName = Self.keyName(for: keyCode)
     }
 
     // Common key shortcuts
-    static let control = PhysicalKey(keyCode: 59) // Left Control
-    static let v = PhysicalKey(keyCode: 9)        // V key
-    static let space = PhysicalKey(keyCode: 49)   // Space
-    static let escape = PhysicalKey(keyCode: 53)  // Escape
-    static let enter = PhysicalKey(keyCode: 36)   // Enter/Return
-    static let tab = PhysicalKey(keyCode: 48)     // Tab
-    static let shift = PhysicalKey(keyCode: 56)   // Left Shift
-    static let command = PhysicalKey(keyCode: 55) // Left Command
-    static let option = PhysicalKey(keyCode: 58)  // Left Option
+    public static let control = PhysicalKey(keyCode: 59) // Left Control
+    public static let v = PhysicalKey(keyCode: 9)        // V key
+    public static let space = PhysicalKey(keyCode: 49)   // Space
+    public static let escape = PhysicalKey(keyCode: 53)  // Escape
+    public static let enter = PhysicalKey(keyCode: 36)   // Enter/Return
+    public static let tab = PhysicalKey(keyCode: 48)     // Tab
+    public static let shift = PhysicalKey(keyCode: 56)   // Left Shift
+    public static let command = PhysicalKey(keyCode: 55) // Left Command
+    public static let rightCommand = PhysicalKey(keyCode: 54) // Right Command
+    public static let option = PhysicalKey(keyCode: 58)  // Left Option
+    public static let rightOption = PhysicalKey(keyCode: 61) // Right Option
 
-    var isModifierKey: Bool {
+    public var isModifierKey: Bool {
         modifierMaskRawValue != nil
     }
 
@@ -51,12 +53,10 @@ struct PhysicalKey: Hashable, Equatable {
     }
 
     private static func keyName(for keyCode: UInt16) -> String {
-        // Try to get the localized key name
         let source = CGEventSource(stateID: .hidSystemState)
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(keyCode), keyDown: true) else {
             return "Key\(keyCode)"
         }
-        // Use keyboardGetUnicodeString to get the key name
         var buffer = [UniChar](repeating: 0, count: 4)
         var actualLength: CFIndex = 0
         event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &actualLength, unicodeString: &buffer)
@@ -69,28 +69,32 @@ struct PhysicalKey: Hashable, Equatable {
 
 // MARK: - KeyChord
 
-/// A chord is a combination of keys that must be pressed together.
-struct KeyChord: Hashable {
-    let keys: Set<PhysicalKey>
+public struct KeyChord: Hashable, Sendable {
+    public let keys: Set<PhysicalKey>
 
-    var displayString: String {
+    public var displayString: String {
         keys.map(\.displayName).sorted().joined(separator: " + ")
     }
 
-    init(keys: [PhysicalKey]) {
+    public init(keys: [PhysicalKey]) {
         self.keys = Set(keys)
     }
 
-    init(_ keys: PhysicalKey...) {
+    public init(_ keys: PhysicalKey...) {
         self.keys = Set(keys)
     }
+
+    public static let optionSpace = KeyChord(.option, .space)
+    public static let controlHold = KeyChord(.control)
+    public static let controlV = KeyChord(.control, .v)
 }
 
 // MARK: - ChordAction
 
-enum ChordAction: String, CaseIterable {
+public enum ChordAction: String, CaseIterable, Sendable {
     case holdToTalk = "hold-to-talk"
     case toggleTalk = "toggle-to-talk"
+    case handsFree = "hands-free"
 }
 
 // MARK: - EventSnapshot
@@ -118,7 +122,6 @@ private extension EventSnapshot {
 
 // MARK: - C Callback
 
-// Global callback function that can be passed as a C function pointer
 @_cdecl("hotkeyCallback")
 func hotkeyCallback(
     proxy: CGEventTapProxy,
@@ -128,7 +131,6 @@ func hotkeyCallback(
 ) -> Unmanaged<CGEvent>? {
     guard let userInfo else { return Unmanaged.passUnretained(event) }
 
-    // Re-enable tap if disabled by system
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
         if let tap = monitor.eventTap {
@@ -144,25 +146,25 @@ func hotkeyCallback(
 
 // MARK: - HotkeyMonitor
 
-protocol HotkeyMonitoring: AnyObject {
+public protocol HotkeyMonitoring: AnyObject {
     var onRecordingStart: (@Sendable () -> Void)? { get set }
     var onRecordingStop: (@Sendable () -> Void)? { get set }
-    var onRecordingRestart: (@Sendable () -> Void)? { get set }
+    var onHandsFreeToggle: (@Sendable () -> Void)? { get set }
+    var onRecordingCancel: (@Sendable () -> Void)? { get set }
 
     func start() -> Bool
     func stop()
     func updateBindings(_ bindings: [ChordAction: KeyChord])
 }
 
-/// Monitors configured key chords for hold-to-talk using a CGEvent tap.
-/// Requires Accessibility permission to create the event tap.
-final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
+public final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
 
     // MARK: - Callbacks
 
-    var onRecordingStart: (@Sendable () -> Void)?
-    var onRecordingStop: (@Sendable () -> Void)?
-    var onRecordingRestart: (@Sendable () -> Void)?
+    public var onRecordingStart: (@Sendable () -> Void)?
+    public var onRecordingStop: (@Sendable () -> Void)?
+    public var onHandsFreeToggle: (@Sendable () -> Void)?
+    public var onRecordingCancel: (@Sendable () -> Void)?
 
     // MARK: - State
 
@@ -173,22 +175,24 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
     private var monitoredKeys: Set<PhysicalKey>
     private var isSuspended = false
     private let stateLock = NSLock()
+    private var holdMachine = HotkeyStateMachine()
 
-    // MARK: - Init
-
-    init(bindings: [ChordAction: KeyChord] = [:]) {
-        self.bindings = bindings
-        self.monitoredKeys = bindings.values.reduce(into: Set<PhysicalKey>()) { keys, chord in
-            keys.formUnion(chord.keys)
+    public init(bindings: [ChordAction: KeyChord] = [:]) {
+        var merged = bindings
+        if merged.isEmpty {
+            merged[.holdToTalk] = .controlHold
         }
+        self.bindings = merged
+        var keys = merged.values.reduce(into: Set<PhysicalKey>()) { k, chord in
+            k.formUnion(chord.keys)
+        }
+        // Always monitor Escape key for quick cancellation
+        keys.insert(PhysicalKey.escape)
+        self.monitoredKeys = keys
         super.init()
     }
 
-    // MARK: - Public API
-
-    /// Starts monitoring for key chord events.
-    /// - Returns: `false` if Accessibility permission is denied.
-    func start() -> Bool {
+    public func start() -> Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
 
@@ -202,7 +206,6 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
         thread.start()
         eventThread = thread
 
-        // Give the thread time to initialize
         usleep(100000) // 100ms
 
         let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
@@ -231,8 +234,7 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
         return true
     }
 
-    /// Stops monitoring and cleans up the event tap.
-    func stop() {
+    public func stop() {
         stateLock.lock()
         let tap = eventTap
         let source = runLoopSource
@@ -250,16 +252,22 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
         eventThread = nil
     }
 
-    func updateBindings(_ bindings: [ChordAction: KeyChord]) {
+    public func updateBindings(_ bindings: [ChordAction: KeyChord]) {
         stateLock.lock()
         self.bindings = bindings
-        monitoredKeys = bindings.values.reduce(into: Set<PhysicalKey>()) { keys, chord in
-            keys.formUnion(chord.keys)
+        var keys = bindings.values.reduce(into: Set<PhysicalKey>()) { k, chord in
+            k.formUnion(chord.keys)
         }
+        keys.insert(PhysicalKey.escape)
+        monitoredKeys = keys
         stateLock.unlock()
     }
 
-    // MARK: - Private
+    public func setHandsFreeState(_ active: Bool) {
+        stateLock.lock()
+        holdMachine.handsFreeActive = active
+        stateLock.unlock()
+    }
 
     private func runEventLoop() {
         RunLoop.current.run()
@@ -274,51 +282,54 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
 
         guard !suspended else { return }
 
-        let pressedKeys = currentPressedKeys()
-
-        switch type {
-        case .flagsChanged, .keyDown, .keyUp:
-            processKeyEvent(snapshot.key, pressedKeys: pressedKeys, type: type)
-        default:
-            break
+        if snapshot.key.keyCode == PhysicalKey.escape.keyCode && type == .keyDown {
+            stateLock.lock()
+            _ = holdMachine.escapePressed()
+            stateLock.unlock()
+            dispatch(.cancel)
+            return
         }
+
+        let pressedKeys = currentPressedKeys()
+        processKeyEvent(snapshot.key, pressedKeys: pressedKeys)
     }
 
-    private func processKeyEvent(_ key: PhysicalKey, pressedKeys: Set<PhysicalKey>, type: CGEventType) {
-        // Check if this key is part of any binding
-        for (_, chord) in bindings {
-            let isPartOfChord = chord.keys.contains(key)
-            let allKeysPressed = chord.keys.isSubset(of: pressedKeys)
+    private func processKeyEvent(_ key: PhysicalKey, pressedKeys: Set<PhysicalKey>) {
+        guard let chord = bindings[.holdToTalk], chord.keys.contains(key) else { return }
+        let allKeysPressed = chord.keys.isSubset(of: pressedKeys)
 
-            switch type {
-            case .keyDown:
-                if isPartOfChord && allKeysPressed {
-                    let callback = onRecordingStart
-                    if let callback {
-                        DispatchQueue.main.async {
-                            callback()
-                        }
-                    }
-                }
-            case .keyUp:
-                if isPartOfChord && !allKeysPressed {
-                    let callback = onRecordingStop
-                    if let callback {
-                        DispatchQueue.main.async {
-                            callback()
-                        }
-                    }
-                }
-            default:
-                break
-            }
+        stateLock.lock()
+        let effect: HotkeyStateMachine.Effect
+        if allKeysPressed {
+            effect = holdMachine.chordBecamePressed(at: Date())
+        } else {
+            effect = holdMachine.chordBecameReleased(at: Date())
         }
+        stateLock.unlock()
+        dispatch(effect)
+    }
+
+    private func dispatch(_ effect: HotkeyStateMachine.Effect) {
+        let callback: (@Sendable () -> Void)?
+        switch effect {
+        case .startHold:
+            callback = onRecordingStart
+        case .stopHold:
+            callback = onRecordingStop
+        case .toggleHandsFree:
+            callback = onHandsFreeToggle
+        case .cancel:
+            callback = onRecordingCancel
+        case .none:
+            callback = nil
+        }
+        guard let callback else { return }
+        DispatchQueue.main.async { callback() }
     }
 
     private func currentPressedKeys() -> Set<PhysicalKey> {
         var keys = Set<PhysicalKey>()
 
-        // Check modifier keys
         let flags = CGEventSource.flagsState(.combinedSessionState)
         for monitoredKey in monitoredKeys where monitoredKey.isModifierKey {
             if let mask = monitoredKey.modifierMaskRawValueForCallback,
@@ -327,7 +338,13 @@ final class HotkeyMonitor: NSObject, HotkeyMonitoring, @unchecked Sendable {
             }
         }
 
-        // Check non-modifier keys
+        // Either Control key satisfies a Control-only hold chord. Device-dependent
+        // bits are not always set on flagsState, so the generic Control bit counts.
+        if monitoredKeys.contains(.control),
+           flags.rawValue & CGEventFlags.maskControl.rawValue == CGEventFlags.maskControl.rawValue {
+            keys.insert(.control)
+        }
+
         for monitoredKey in monitoredKeys where !monitoredKey.isModifierKey {
             if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(monitoredKey.keyCode)) {
                 keys.insert(monitoredKey)
