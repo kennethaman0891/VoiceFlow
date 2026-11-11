@@ -141,12 +141,12 @@
     // Trigger resize on all Three.js canvases
     var canvases = document.querySelectorAll('.hero-logo-wrap canvas, .mic-3d-wrap canvas');
     canvases.forEach(function (canvas) {
-      // The ResizeObserver in logo.js should handle this, but we can force a reflow
-      if (canvas._threeRenderer) {
-        var rect = canvas.parentElement.getBoundingClientRect();
-        var size = Math.min(rect.width, rect.height) || 400;
-        canvas._threeRenderer.setSize(size, size);
-      }
+      if (!canvas._threeRenderer || !canvas.parentElement) return;
+      // Hero sizing lives in logo.js so the camera aspect stays in sync.
+      if (canvas.parentElement.classList.contains('hero-stage')) return;
+      var rect = canvas.parentElement.getBoundingClientRect();
+      var size = Math.min(rect.width, rect.height) || 400;
+      canvas._threeRenderer.setSize(size, size);
     });
   }
 

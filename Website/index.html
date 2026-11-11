@@ -164,7 +164,6 @@
         <div class="hero-lines" aria-hidden="true"></div>
         <div class="container">
             <div class="hero-grid">
-                <!-- Left: copy + 3D logo -->
                 <div class="hero-left">
                     <div class="hero-copy">
                         <span class="eyebrow">
@@ -182,11 +181,13 @@
                         </div>
                         <p class="trust">On-device Whisper · No cloud · No telemetry · Open source</p>
                     </div>
-                    <!-- 3D brand mark -->
-                    <div class="hero-logo-wrap" id="logo-container" aria-label="VoiceFlow 3D brand mark"></div>
                 </div>
 
-                <!-- Right: dictation demo -->
+                <!-- Three.js stage: floating mark, floor, voice rings -->
+                <div class="hero-logo-wrap hero-stage" id="logo-container" aria-hidden="true"></div>
+            </div>
+
+                <!-- Dictation demo, full width under the intro -->
                 <section class="demo" id="demo" aria-labelledby="demo-title">
                     <div class="demo-head">
                         <span class="demo-live"><span class="demo-live-dot"></span>Live dictation</span>
@@ -216,7 +217,6 @@
                         <div class="demo-note" id="vf-note" hidden></div>
                     </div>
                 </section>
-            </div>
         </div>
     </header>
 

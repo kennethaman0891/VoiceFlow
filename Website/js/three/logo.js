@@ -415,14 +415,56 @@ function buildGlowEffects() {
   return group;
 }
 
+// Landing stage only. Rings lie on the ground (XZ). CircleGeometry faces +z;
+// rotation.x = -π/2 turns that normal to +y so the disc is seen from above.
+function buildVoiceField() {
+  const group = new THREE.Group();
+  const rings = [];
+  for (let i = 0; i < 3; i++) {
+    const mesh = new THREE.Mesh(
+      new THREE.TorusGeometry(1.2, 0.007, 8, 80),
+      new THREE.MeshBasicMaterial({
+        color: i === 1 ? LOGO.colors.purple : LOGO.colors.cyan,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+      })
+    );
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.y = -1.02;
+    mesh.userData.phase = i / 3;
+    group.add(mesh);
+    rings.push(mesh);
+  }
+
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(1.45, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0x3b82f6,
+      transparent: true,
+      opacity: 0.14,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = -1.06;
+  group.add(disc);
+
+  group.userData.rings = rings;
+  return group;
+}
+
 // ─── Scene assembly ──────────────────────────────────────────────────────────
 async function createScene(container, options = {}) {
   const {
     isClone = false,
     reduceMotion = false,
     isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent),
-    isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4
+    isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4,
+    variant = 'showcase'
   } = options;
+  const isHero = variant === 'hero';
 
   const renderer = new THREE.WebGLRenderer({ 
     antialias: !isMobile, // Disable AA on mobile for performance
@@ -431,6 +473,7 @@ async function createScene(container, options = {}) {
     preserveDrawingBuffer: false
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
+  renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -440,8 +483,11 @@ async function createScene(container, options = {}) {
   renderer.domElement._threeRenderer = renderer;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-  camera.position.set(0, 0, 4.5);
+  const camera = new THREE.PerspectiveCamera(isHero ? 30 : 40, 1, 0.1, 100);
+  // Hero camera sits on +z, slightly above the mark, looking toward −z.
+  // Screen +x is world +x from this pose.
+  const camBase = isHero ? new THREE.Vector3(0.2, 0.42, 6.6) : new THREE.Vector3(0, 0, 4.5);
+  camera.position.copy(camBase);
 
   // Ambient
   scene.add(new THREE.AmbientLight(0xffffff, 0.4));
@@ -451,12 +497,15 @@ async function createScene(container, options = {}) {
 
   const logo = new THREE.Group();
 
-  // Build all components
+  // Build all components. The landing stage floats the mark; the
+  // showcase keeps the icon card (navy plate, wave lines, glow).
   logo.add(await buildFrame());
-  logo.add(buildBackground());
-  logo.children[1].position.z = -0.15;
-  logo.add(buildWaveLines());
-  logo.add(buildGlowEffects());
+  if (!isHero) {
+    logo.add(buildBackground());
+    logo.children[1].position.z = -0.15;
+    logo.add(buildWaveLines());
+    logo.add(buildGlowEffects());
+  }
 
   // T letter
   const tGroup = buildTLetter();
@@ -480,6 +529,27 @@ async function createScene(container, options = {}) {
 
   scene.add(logo);
 
+  let voiceField = null;
+  if (isHero) {
+    // No environment map, so a near-mirror metal reads as black. Soften it
+    // so the letter catches the key light as brushed silver.
+    logo.traverse((obj) => {
+      const mat = obj.material;
+      if (!mat || mat.metalness == null || mat.metalness < 0.7) return;
+      mat.metalness = 0.42;
+      mat.roughness = Math.max(mat.roughness, 0.32);
+      mat.color = new THREE.Color('#E7EDF6');
+      mat.envMapIntensity = 0.4;
+    });
+    logo.scale.setScalar(0.78);
+    const front = new THREE.DirectionalLight(0xf8fbff, 1.8);
+    front.position.set(0.4, 1.4, 5);
+    scene.add(front);
+    scene.add(new THREE.HemisphereLight(0xdbeafe, 0x10182c, 0.7));
+    voiceField = buildVoiceField();
+    scene.add(voiceField);
+  }
+
   let mx = 0, my = 0;
   if (!reduceMotion && !isMobile) {
     document.addEventListener('mousemove', (e) => {
@@ -496,9 +566,16 @@ async function createScene(container, options = {}) {
 
   function resize() {
     const rect = container.getBoundingClientRect();
-    const size = Math.min(rect.width, rect.height) || 400;
-    renderer.setSize(size, size);
-    camera.aspect = 1;
+    const w = Math.max(1, rect.width);
+    const h = Math.max(1, rect.height);
+    if (isHero) {
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+    } else {
+      const size = Math.min(w, h) || 400;
+      renderer.setSize(size, size);
+      camera.aspect = 1;
+    }
     camera.updateProjectionMatrix();
   }
   resize();
@@ -515,13 +592,29 @@ async function createScene(container, options = {}) {
     time = (now - startTime) * 0.001;
     
     if (!reduceMotion) {
-      logo.rotation.y = Math.sin(time * LOGO.anim.rotSpeed) * 0.4;
-      logo.rotation.x = Math.cos(time * LOGO.anim.rotSpeed * 0.7) * 0.08;
+      if (isHero) {
+        logo.position.y = Math.sin(time * 0.7) * 0.045;
+        logo.rotation.y = Math.sin(time * 0.28) * 0.18;
+        logo.rotation.x = Math.sin(time * 0.2) * 0.035;
+        const rings = voiceField.userData.rings;
+        for (let i = 0; i < rings.length; i++) {
+          const p = (time * 0.16 + rings[i].userData.phase) % 1;
+          const s = 0.82 + p * 0.85;
+          rings[i].scale.setScalar(s);
+          rings[i].material.opacity = (1 - p) * 0.4;
+        }
+      } else {
+        logo.rotation.y = Math.sin(time * LOGO.anim.rotSpeed) * 0.4;
+        logo.rotation.x = Math.cos(time * LOGO.anim.rotSpeed * 0.7) * 0.08;
+      }
     }
     
     if (!reduceMotion && !isMobile) {
-      camera.position.x += (mx * LOGO.anim.parallaxStrength - camera.position.x) * 0.04;
-      camera.position.y += (-my * LOGO.anim.parallaxStrength - camera.position.y) * 0.04;
+      const sway = isHero ? 0.18 : LOGO.anim.parallaxStrength;
+      const targetX = camBase.x + mx * sway;
+      const targetY = camBase.y - my * sway * 0.65;
+      camera.position.x += (targetX - camera.position.x) * 0.045;
+      camera.position.y += (targetY - camera.position.y) * 0.045;
     }
     
     camera.lookAt(0, 0, 0);
@@ -576,7 +669,9 @@ async function init() {
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
   const isLowEnd = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4;
 
-  primaryInstance = await createScene(container, { reduceMotion, isMobile, isLowEnd });
+  primaryInstance = await createScene(container, {
+    reduceMotion, isMobile, isLowEnd, variant: 'hero'
+  });
   
   // Handle reduced motion changes
   if (window.matchMedia) {

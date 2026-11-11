@@ -360,12 +360,14 @@ img, svg, canvas { display: block; max-width: 100%; }
 
 .hero-grid {
   position: relative; z-index: 1;
-  display: grid; grid-template-columns: 1fr 1fr; gap: clamp(24px, 4vw, 56px);
-  align-items: start;
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+  gap: clamp(12px, 3vw, 40px);
+  align-items: center;
 }
 .hero-left {
   display: flex; flex-direction: column; gap: clamp(20px, 3vw, 36px);
   align-items: center; text-align: center;
+  position: relative; z-index: 1;
 }
 @media (min-width: 768px) {
   .hero-left { align-items: flex-start; text-align: left; }
@@ -409,11 +411,18 @@ h1 {
 }
 
 .hero-logo-wrap {
-  width: 100%; max-width: 420px; aspect-ratio: 1 / 1;
-  display: grid; place-items: center;
-  margin: 0 auto;
+  width: 100%;
+  height: clamp(380px, 46vw, 540px);
+  position: relative;
+  margin: 0;
+  pointer-events: none;
 }
 .hero-logo-wrap canvas { width: 100%; height: 100%; display: block; }
+.hero .demo {
+  position: relative; z-index: 1;
+  max-width: none;
+  margin-top: clamp(8px, 2vw, 28px);
+}
 @media (prefers-reduced-motion: reduce) {
   .hero-logo-wrap canvas { animation: none; }
 }
@@ -777,7 +786,7 @@ code {
   .hero-grid { grid-template-columns: 1fr; gap: clamp(20px, 3vw, 32px); }
   .hero-left { align-items: center; text-align: center; }
   .cta-row { justify-content: center; }
-  .hero-logo-wrap { max-width: 380px; order: -1; }
+  .hero-logo-wrap { order: -1; height: clamp(260px, 68vw, 380px); max-width: 520px; margin: 0 auto; }
   .demo { max-width: 100%; }
   .how-grid { grid-template-columns: 1fr; gap: clamp(20px, 3vw, 32px); }
   .how-intro { text-align: center; }
@@ -820,7 +829,7 @@ code {
   .btn { padding: 14px 24px; font-size: 16px; }
   .btn-sm { --btn-min: 48px; padding: 12px 20px; font-size: 15px; }
   
-  .hero-logo-wrap { max-width: 100%; aspect-ratio: 1 / 1; }
+  .hero-logo-wrap { max-width: 100%; height: clamp(240px, 78vw, 340px); }
   
   .section { padding: clamp(40px, 7vw, 72px) 0; }
   
@@ -872,7 +881,6 @@ code {
 
 /* High DPI / print considerations */
 @media (min-resolution: 2dppx) {
-  .hero-logo-wrap canvas,
   .mic-3d-wrap canvas,
   .ribbon { image-rendering: -webkit-optimize-contrast; }
 }
