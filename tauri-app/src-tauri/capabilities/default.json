@@ -2,7 +2,8 @@
   "identifier": "default",
   "description": "Default capability for VoiceFlow v2",
   "windows": [
-    "mic-overlay"
+    "mic-overlay",
+    "main"
   ],
   "permissions": [
     "core:default",
@@ -13,6 +14,16 @@
     "notification:default",
     "clipboard-manager:default",
     "os:default",
-    "core:window:default"
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "core:window:allow-inner-position",
+    "core:window:allow-current-monitor",
+    "core:window:allow-primary-monitor",
+    "core:window:allow-center",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-ignore-cursor-events"
   ]
 }

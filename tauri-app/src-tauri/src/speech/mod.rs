@@ -1,2 +1,2 @@
 pub mod transcriber;
-pub use transcriber::{WhisperContext, WhisperParams};
+pub use transcriber::{polish_transcript, WhisperEngine};

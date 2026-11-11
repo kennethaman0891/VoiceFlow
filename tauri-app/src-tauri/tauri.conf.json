@@ -15,14 +15,14 @@
     "windows": [
       {
         "label": "mic-overlay",
-        "title": "VoiceFlow Mic",
-        "width": 72,
-        "height": 72,
-        "minWidth": 72,
-        "minHeight": 72,
-        "maxWidth": 72,
-        "maxHeight": 72,
-        "resizable": false,
+        "title": "VoiceFlow HUD",
+        "width": 320,
+        "height": 56,
+        "minWidth": 240,
+        "minHeight": 48,
+        "maxWidth": 540,
+        "maxHeight": 180,
+        "resizable": true,
         "fullscreen": false,
         "transparent": true,
         "decorations": false,
@@ -32,8 +32,6 @@
         "skipTaskbar": true,
         "visible": true,
         "focus": false,
-        "x": 24,
-        "y": 80,
         "url": "index.html#overlay"
       }
     ],

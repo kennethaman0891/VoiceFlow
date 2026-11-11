@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+pub type AudioChunkCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
+
 /// Thread-safe audio recorder using cpal
 pub struct AudioRecorder {
     /// Current device (if any)
@@ -15,6 +17,11 @@ pub struct AudioRecorder {
     is_recording: Arc<AtomicBool>,
     /// The active stream (kept alive while recording)
     stream: Mutex<Option<cpal::Stream>>,
+    /// Optional real-time chunk listener for VAD / levels
+    chunk_callback: Option<AudioChunkCallback>,
+    /// Fractional source position carried across callbacks so 48 kHz → 16 kHz
+    /// does not drop a sample at every buffer boundary.
+    resample_phase: Arc<Mutex<f64>>,
 }
 
 unsafe impl Send for AudioRecorder {}
@@ -26,7 +33,13 @@ impl AudioRecorder {
             samples: Arc::new(Mutex::new(Vec::new())),
             is_recording: Arc::new(AtomicBool::new(false)),
             stream: Mutex::new(None),
+            chunk_callback: None,
+            resample_phase: Arc::new(Mutex::new(0.0)),
         })
+    }
+
+    pub fn set_chunk_callback(&mut self, cb: AudioChunkCallback) {
+        self.chunk_callback = Some(cb);
     }
 
     /// Get the default input device
@@ -48,10 +61,56 @@ impl AudioRecorder {
         Ok(devices)
     }
 
+    /// Downmix multi-channel audio to mono and resample to 16kHz via linear interpolation
+    fn resample_and_downmix(
+        data: &[f32],
+        channels: usize,
+        source_rate: u32,
+        target_rate: u32,
+        phase: &mut f64,
+    ) -> Vec<f32> {
+        if data.is_empty() || channels == 0 {
+            return Vec::new();
+        }
+
+        // Step 1: Interleaved multi-channel to mono
+        let num_frames = data.len() / channels;
+        let mut mono = Vec::with_capacity(num_frames);
+        for frame_idx in 0..num_frames {
+            let offset = frame_idx * channels;
+            let mut sum = 0.0f32;
+            for ch in 0..channels {
+                sum += data[offset + ch];
+            }
+            mono.push(sum / channels as f32);
+        }
+
+        if source_rate == target_rate {
+            *phase = 0.0;
+            return mono;
+        }
+
+        let ratio = source_rate as f64 / target_rate as f64;
+        let mut src_pos = *phase;
+        let mut resampled = Vec::new();
+        let last = mono.len() as f64 - 1.0;
+        while src_pos < last {
+            let idx = src_pos.floor() as usize;
+            let frac = (src_pos - idx as f64) as f32;
+            let s0 = mono[idx];
+            let s1 = mono[idx + 1];
+            resampled.push((s0 + frac * (s1 - s0)).clamp(-1.0, 1.0));
+            src_pos += ratio;
+        }
+        *phase = (src_pos - mono.len() as f64).max(0.0);
+        resampled
+    }
+
     /// Start recording from the given device (or default)
     pub fn start_recording(&self, device: Option<cpal::Device>) -> Result<()> {
         // Clear previous samples
         self.samples.lock().unwrap().clear();
+        *self.resample_phase.lock().unwrap() = 0.0;
         self.is_recording.store(true, Ordering::SeqCst);
 
         let device = match device {
@@ -59,63 +118,92 @@ impl AudioRecorder {
             None => self.default_input_device()?,
         };
 
-        let config = device.default_input_config()
+        let config = device
+            .default_input_config()
             .context("Failed to get default input config")?;
 
         let sample_rate = config.sample_rate().0;
-        let channels = config.channels() as u16;
+        let channels = config.channels() as usize;
 
         let samples = Arc::clone(&self.samples);
         let is_recording = Arc::clone(&self.is_recording);
+        let callback = self.chunk_callback.clone();
+        let phase = Arc::clone(&self.resample_phase);
 
-        // Build stream based on sample format
-        let stream = match config.sample_format() {
+        let sample_format = config.sample_format();
+        let stream_config: cpal::StreamConfig = config.into();
+        let stream = match sample_format {
             cpal::SampleFormat::F32 => {
+                let samples = Arc::clone(&samples);
+                let is_recording = Arc::clone(&is_recording);
+                let callback = callback.clone();
+                let phase = Arc::clone(&phase);
                 device.build_input_stream(
-                    &config.into(),
-                    move |data: &[f32], _: &_| {
-                        if is_recording.load(Ordering::SeqCst) {
-                            // Resample to 16kHz if needed (whisper.cpp expects 16kHz)
-                            let target_rate = 16000u32;
-                            if sample_rate == target_rate {
-                                let mut s = samples.lock().unwrap();
-                                s.extend_from_slice(data);
-                            } else {
-                                // Simple resampling: downsample by skipping samples
-                                let ratio = sample_rate as f64 / target_rate as f64;
-                                let mut s = samples.lock().unwrap();
-                                for i in (0..data.len()).step_by(ratio as usize) {
-                                    s.push(data[i]);
-                                }
-                            }
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        if !is_recording.load(Ordering::SeqCst) {
+                            return;
                         }
+                        let mut phase_guard = phase.lock().unwrap();
+                        let resampled = Self::resample_and_downmix(
+                            data,
+                            channels,
+                            sample_rate,
+                            16000,
+                            &mut phase_guard,
+                        );
+                        drop(phase_guard);
+                        if resampled.is_empty() {
+                            return;
+                        }
+                        if let Some(ref cb) = callback {
+                            cb(&resampled);
+                        }
+                        samples.lock().unwrap().extend_from_slice(&resampled);
                     },
                     move |err| {
-                        eprintln!("Input stream error: {}", err);
+                        log::error!("Audio input stream error: {}", err);
                     },
                     None,
                 )?
             }
             cpal::SampleFormat::I16 => {
+                let samples = Arc::clone(&samples);
+                let is_recording = Arc::clone(&is_recording);
+                let callback = callback.clone();
+                let phase = Arc::clone(&phase);
                 device.build_input_stream(
-                    &config.into(),
-                    move |data: &[i16], _: &_| {
-                        if is_recording.load(Ordering::SeqCst) {
-                            let target_rate = 16000u32;
-                            let ratio = sample_rate as f64 / target_rate as f64;
-                            let mut s = samples.lock().unwrap();
-                            for i in (0..data.len()).step_by(ratio as usize) {
-                                s.push(data[i] as f32 / 32768.0);
-                            }
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        if !is_recording.load(Ordering::SeqCst) {
+                            return;
                         }
+                        let f32_data: Vec<f32> =
+                            data.iter().map(|&sample| sample as f32 / 32768.0).collect();
+                        let mut phase_guard = phase.lock().unwrap();
+                        let resampled = Self::resample_and_downmix(
+                            &f32_data,
+                            channels,
+                            sample_rate,
+                            16000,
+                            &mut phase_guard,
+                        );
+                        drop(phase_guard);
+                        if resampled.is_empty() {
+                            return;
+                        }
+                        if let Some(ref cb) = callback {
+                            cb(&resampled);
+                        }
+                        samples.lock().unwrap().extend_from_slice(&resampled);
                     },
                     move |err| {
-                        eprintln!("Input stream error: {}", err);
+                        log::error!("Audio input stream error: {}", err);
                     },
                     None,
                 )?
             }
-            _ => anyhow::bail!("Unsupported sample format: {:?}", config.sample_format()),
+            other => anyhow::bail!("Unsupported sample format: {:?}", other),
         };
 
         stream.play()?;
@@ -129,11 +217,10 @@ impl AudioRecorder {
     pub fn stop_recording(&self) -> Vec<f32> {
         self.is_recording.store(false, Ordering::SeqCst);
 
-        // Drop the stream and device reference so we can't accidentally restart
+        // Drop the stream and device reference
         self.stream.lock().unwrap().take();
         self.device.lock().unwrap().take();
 
-        // Give a moment for any pending writes to finish
         std::thread::sleep(Duration::from_millis(50));
 
         std::mem::take(&mut *self.samples.lock().unwrap())

@@ -1,16 +1,18 @@
-use std::sync::Mutex;
-use serde::{Deserialize, Serialize};
+use crossbeam_channel::{Receiver, Sender};
 use once_cell::sync::Lazy;
-use crossbeam_channel::{Sender, Receiver};
+use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum AppStatus {
     Idle,
     Recording,
+    HandsFree,
     Transcribing,
     Cleaning,
-    Error(String),
+    Success,
+    Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +29,22 @@ pub struct AppSettings {
     pub whisper_model: String,
     #[serde(default = "default_cleanup_model")]
     pub cleanup_model: String,
+    #[serde(default = "default_silence_timeout_ms")]
+    pub silence_timeout_ms: u64,
+    #[serde(default = "default_double_click_enabled")]
+    pub double_click_enabled: bool,
+    #[serde(default = "default_transcribe_shortcut")]
+    pub transcribe_shortcut: String,
+    #[serde(default = "default_push_to_talk")]
+    pub push_to_talk: bool,
+    #[serde(default)]
+    pub microphone: Option<String>,
+    #[serde(default)]
+    pub mute_while_recording: bool,
+    #[serde(default)]
+    pub audio_feedback: bool,
+    #[serde(default = "default_feedback_volume")]
+    pub feedback_volume: u32,
 }
 
 impl Default for AppSettings {
@@ -38,15 +56,87 @@ impl Default for AppSettings {
             output_device: None,
             whisper_model: default_whisper_model(),
             cleanup_model: default_cleanup_model(),
+            silence_timeout_ms: default_silence_timeout_ms(),
+            double_click_enabled: default_double_click_enabled(),
+            transcribe_shortcut: default_transcribe_shortcut(),
+            push_to_talk: default_push_to_talk(),
+            microphone: None,
+            mute_while_recording: false,
+            audio_feedback: false,
+            feedback_volume: default_feedback_volume(),
         }
     }
 }
 
-fn default_language() -> String { "en".to_string() }
-fn default_auto_paste() -> bool { true }
-fn default_show_mic_widget() -> bool { true }
-fn default_whisper_model() -> String { "medium".to_string() }
-fn default_cleanup_model() -> String { "off".to_string() }
+fn default_transcribe_shortcut() -> String {
+    "Left Option + Space".to_string()
+}
+fn default_push_to_talk() -> bool {
+    true
+}
+fn default_feedback_volume() -> u32 {
+    100
+}
+
+fn default_language() -> String {
+    "en".to_string()
+}
+fn default_auto_paste() -> bool {
+    true
+}
+fn default_show_mic_widget() -> bool {
+    true
+}
+fn default_whisper_model() -> String {
+    "base".to_string()
+}
+fn default_cleanup_model() -> String {
+    "off".to_string()
+}
+fn default_silence_timeout_ms() -> u64 {
+    2000
+}
+fn default_double_click_enabled() -> bool {
+    true
+}
+
+pub fn has_saved_settings() -> bool {
+    settings_file().map(|path| path.is_file()).unwrap_or(false)
+}
+
+fn settings_file() -> Option<std::path::PathBuf> {
+    let dir = match std::env::consts::OS {
+        "macos" => dirs::home_dir()?.join("Library/Application Support/VoiceFlow"),
+        "windows" => dirs::config_dir()?.join("VoiceFlow"),
+        "linux" => dirs::data_dir()?.join("voiceflow"),
+        _ => dirs::home_dir()?.join(".voiceflow"),
+    };
+    Some(dir.join("settings.json"))
+}
+
+impl AppSettings {
+    pub fn load() -> Self {
+        let Some(path) = settings_file() else {
+            return Self::default();
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    pub fn save(&self) {
+        let Some(path) = settings_file() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(raw) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(path, raw);
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -64,66 +154,27 @@ pub struct AppState {
     pub event_tx: Mutex<Sender<AppEvent>>,
 }
 
-impl AppState {
-    pub fn new() -> Self {
-        let (tx, rx) = crossbeam_channel::unbounded();
+static APP_STATE: Lazy<Mutex<AppState>> = Lazy::new(|| {
+    let (tx, rx) = crossbeam_channel::unbounded();
 
-        // Spawn receiver task
-        std::thread::spawn(move || {
-            while let Ok(event) = rx.recv() {
-                match &event {
-                    AppEvent::StatusChanged(s) => {
-                        log::info!("Status changed: {:?}", s);
-                    }
-                    AppEvent::Transcript(t) => {
-                        log::info!("Transcript received: {}", t.chars().take(50).collect::<String>());
-                    }
-                    AppEvent::Error(e) => {
-                        log::warn!("App error: {}", e);
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        AppState {
-            settings: Mutex::new(AppSettings::default()),
-            current_transcript: Mutex::new(Vec::new()),
-            status: Mutex::new(AppStatus::Idle),
-            event_tx: Mutex::new(tx),
+    std::thread::spawn(move || {
+        while let Ok(event) = rx.recv() {
+            log::debug!("App event: {:?}", event);
         }
-    }
+    });
 
-    pub fn emit(&self, event: AppEvent) {
-        if let Ok(tx) = self.event_tx.lock() {
-            let _ = tx.send(event);
-        }
-    }
+    Mutex::new(AppState {
+        settings: Mutex::new(AppSettings::default()),
+        current_transcript: Mutex::new(Vec::new()),
+        status: Mutex::new(AppStatus::Idle),
+        event_tx: Mutex::new(tx),
+    })
+});
 
-    pub fn set_status(&self, status: AppStatus) {
-        *self.status.lock().unwrap() = status.clone();
-        self.emit(AppEvent::StatusChanged(status));
-    }
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// Module-level singleton
-pub static APP_STATE: Lazy<Mutex<AppState>> = Lazy::new(|| Mutex::new(AppState::new()));
-
-pub fn get_state() -> &'static Mutex<AppState> {
-    &APP_STATE
-}
-
-/// Helper to lock and access AppState fields
 pub fn with_state<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut AppState) -> R,
+    F: FnOnce(&AppState) -> R,
 {
-    let mut state = APP_STATE.lock().unwrap();
-    f(&mut state)
+    let state = APP_STATE.lock().unwrap();
+    f(&state)
 }

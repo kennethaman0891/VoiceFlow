@@ -1,2 +1,2 @@
 pub mod manager;
-pub use manager::ModelManager;
+pub use manager::{DownloadProgressPayload, ModelInfo, ModelManager};

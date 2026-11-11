@@ -2,9 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- App Sandbox (required for Mac App Store / hardened runtime) -->
+    <!-- Menu-bar dictation needs the microphone, Accessibility paste, and
+         the real Application Support models folder. The App Sandbox blocks those. -->
     <key>com.apple.security.app-sandbox</key>
-    <true/>
+    <false/>
 
     <!-- Network access -->
     <key>com.apple.security.network.client</key>
