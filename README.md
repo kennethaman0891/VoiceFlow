@@ -51,7 +51,7 @@ Built for **developers, writers, journalists, and privacy-conscious users** who 
 ## Features
 
 - **🔇 Offline dictation** — Speech recognition runs entirely on-device via local Whisper (whisper.cpp / whisper-rs)
-- **⌨️ Global shortcut** — `⌘⇧V` (macOS) / `Ctrl+Shift+V` (Windows/Linux) to toggle recording from any app
+- **⌨️ Global shortcut** — Hold `Option+Space` (macOS) / `Ctrl+Space` (Windows/Linux) to dictate. Double-tap for hands-free. `Esc` cancels the open take.
 - **📋 Auto-copy to clipboard** — Optionally paste the transcript into the frontmost application automatically
 - **💻 System tray / menu-bar app** — Runs in the background, shows window on demand; Dock-less on macOS (`LSUIElement`)
 - **🌊 Streaming transcription** — Optional real-time partial transcripts via Groq's free Whisper API (~275ms latency)
@@ -124,7 +124,7 @@ npm run tauri build
 ### Swift macOS App (native)
 
 ```bash
-# Generate Xcode project from VoiceFlow.yml
+# Generate Xcode project from project.yml
 brew install xcodegen
 xcodegen generate
 
