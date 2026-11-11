@@ -1,31 +1,49 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import MicWidget from './components/MicWidget';
-import { useState, useEffect } from 'react';
+import FloatingHUD from './components/FloatingHUD';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { AppStatus } from './types';
 
-// Lightweight overlay app - only renders the floating mic widget
 function OverlayApp() {
-  const [status, setStatus] = useState<'idle' | 'recording' | 'transcribing' | 'cleaning' | 'error'>('idle');
+  const [status, setStatus] = useState<AppStatus>('idle');
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
   const [showWidget, setShowWidget] = useState(true);
 
   useEffect(() => {
-    // Listen for status changes from backend
-    const unlistenStatus = listen('status', (event: any) => {
-      const newStatus = event.payload as 'idle' | 'recording' | 'transcribing' | 'cleaning' | 'error';
-      setStatus(newStatus);
-    });
-
-    // Listen for hotkey press
-    const unlistenHotkey = listen('hotkey_press', () => {
-      if (status === 'idle') {
-        handleToggleRecording();
+    const unlistenStatus = listen<AppStatus>('status', (event) => {
+      const next = event.payload;
+      setStatus(next);
+      if (next !== 'error') {
+        setErrorMessage('');
+      }
+      if (next === 'idle') {
+        window.setTimeout(() => setLiveTranscript(''), 2000);
       }
     });
 
-    // Load settings to check if widget should be shown
+    const unlistenTranscript = listen<string>('transcript', (event) => {
+      const text = typeof event.payload === 'string' ? event.payload : '';
+      if (text) {
+        setLiveTranscript(text);
+      }
+    });
+
+    const unlistenError = listen<string>('error', (event) => {
+      const message = typeof event.payload === 'string' ? event.payload : 'Something went wrong';
+      setErrorMessage(message);
+      setStatus('error');
+    });
+
+    const unlistenSettings = listen<any>('settings_changed', (event) => {
+      const nextSettings = event.payload;
+      if (nextSettings && typeof nextSettings.show_mic_widget === 'boolean') {
+        setShowWidget(nextSettings.show_mic_widget);
+      }
+    });
+
     invoke('get_settings').then((settings: any) => {
       if (settings) {
         setShowWidget(settings.show_mic_widget ?? true);
@@ -33,39 +51,49 @@ function OverlayApp() {
     }).catch(console.error);
 
     return () => {
-      unlistenStatus.then(unlisten => unlisten());
-      unlistenHotkey.then(unlisten => unlisten());
+      unlistenStatus.then((unlisten) => unlisten());
+      unlistenTranscript.then((unlisten) => unlisten());
+      unlistenError.then((unlisten) => unlisten());
+      unlistenSettings.then((unlisten) => unlisten());
     };
-  }, [status]);
+  }, []);
 
   const handleToggleRecording = async () => {
     try {
       await invoke('toggle_recording');
     } catch (error) {
       console.error('Recording failed:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Recording failed');
       setStatus('error');
+    }
+  };
+
+  const handleCancel = async () => {
+    try {
+      await invoke('cancel_recording');
+    } catch (error) {
+      console.error('Cancel recording failed:', error);
     }
   };
 
   if (!showWidget) return null;
 
   return (
-    <MicWidget
+    <FloatingHUD
       status={status}
+      liveTranscript={liveTranscript}
+      errorMessage={errorMessage}
       onToggleRecording={handleToggleRecording}
+      onCancel={handleCancel}
       visible={true}
     />
   );
 }
 
-// Detect if we're in the overlay window
 const isOverlay = window.location.hash === '#overlay';
-console.log('[VoiceFlow] Window detection:', { 
-  hash: window.location.hash, 
-  isOverlay, 
-  href: window.location.href,
-  userAgent: navigator.userAgent
-});
+if (isOverlay) {
+  document.body.classList.add('overlay-mode');
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

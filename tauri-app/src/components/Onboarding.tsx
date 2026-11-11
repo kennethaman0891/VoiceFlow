@@ -1,6 +1,8 @@
+import { ListedModel } from '../types';
+
 interface OnboardingProps {
-  models: Array<{ name: string; filename: string; downloaded: boolean; sizeMb: number; url: string }>;
-  onDownload: (url: string, filename: string, sizeMb: number) => void;
+  models: ListedModel[];
+  onDownload: (url: string, filename: string, sizeMb: number, sha256?: string) => void;
   onComplete: () => void;
 }
 
@@ -10,7 +12,7 @@ export default function Onboarding({ models, onDownload, onComplete }: Onboardin
 
   const handleDownloadAll = async () => {
     for (const model of missingModels) {
-      await onDownload(model.url, model.filename, model.sizeMb);
+      await onDownload(model.url, model.filename, model.sizeMb, model.sha256);
     }
   };
 

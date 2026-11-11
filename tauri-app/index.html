@@ -21,13 +21,19 @@
   <!-- Overlay window styles -->
   <style id="overlay-styles">
     /* These styles are applied when in overlay mode (#overlay) */
-    body:has(#root:has(.mic-widget.overlay-mode)) {
-      margin: 0;
-      padding: 0;
-      background: transparent;
+    body.overlay-mode,
+    body:has(.voice-hud-root) {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      width: 100% !important;
+      height: 100% !important;
+      overflow: hidden !important;
+    }
+    #root {
       width: 100%;
       height: 100%;
-      overflow: hidden;
     }
   </style>
 

@@ -446,22 +446,28 @@ kbd {
   color: #ef4444;
 }
 
-/* Ensure overlay window body has no margins/padding */
+/* Ensure overlay window body has no margins/padding and is completely transparent */
+body.overlay-mode,
+body:has(.voice-hud-root),
 body:has(.mic-widget.overlay-mode) {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: transparent;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
+body.overlay-mode #root,
+#root:has(.voice-hud-root),
 #root:has(.mic-widget.overlay-mode) {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
 }
 
 .mic-widget:hover {
@@ -661,6 +667,98 @@ body:has(.mic-widget.overlay-mode) {
   margin: 0;
   padding: 8px;
   text-align: center;
+}
+
+/* Hardware Profile & Ghost Pepper Info */
+.hardware-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hardware-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hardware-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tier-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(34, 211, 238, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+.hardware-details {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.hardware-specs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.spec-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.setting-hint {
+  font-size: 11px;
+  color: var(--dim);
+  line-height: 1.3;
+}
+
+.slider-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-input {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.slider-val {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  min-width: 44px;
+  text-align: right;
 }
 
 .settings-footer {
