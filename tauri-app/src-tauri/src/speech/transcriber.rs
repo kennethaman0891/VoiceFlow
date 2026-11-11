@@ -25,6 +25,26 @@ impl WhisperEngine {
 
     /// Transcribe 16 kHz mono f32 samples. Returns an empty string for silence.
     pub fn transcribe(&self, samples: &[f32], threads: i32, language: &str) -> Result<String> {
+        self.decode(samples, threads, language, false)
+    }
+
+    /// One greedy pass over a short tail, for the live sheet.
+    pub fn transcribe_partial(
+        &self,
+        samples: &[f32],
+        threads: i32,
+        language: &str,
+    ) -> Result<String> {
+        self.decode(samples, threads, language, true)
+    }
+
+    fn decode(
+        &self,
+        samples: &[f32],
+        threads: i32,
+        language: &str,
+        partial: bool,
+    ) -> Result<String> {
         if samples.len() < 4_800 {
             return Ok(String::new());
         }
@@ -40,11 +60,17 @@ impl WhisperEngine {
         params.set_language(lang);
         params.set_translate(false);
         params.set_no_context(true);
+        params.set_no_timestamps(true);
+        params.set_temperature(0.0);
+        params.set_temperature_inc(0.0);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
-        params.set_single_segment(false);
+        params.set_single_segment(partial);
+        if partial {
+            params.set_max_tokens(64);
+        }
 
         state
             .full(params, samples)

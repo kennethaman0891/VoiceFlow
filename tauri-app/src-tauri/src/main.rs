@@ -3,15 +3,18 @@ mod cleanup;
 mod hardware;
 mod input;
 mod model;
+mod overlay;
+mod platform;
 mod speech;
 mod state;
 
+use audio::levels::LevelMeter;
 use audio::recorder::AudioRecorder;
 use audio::vad::{VadDetector, VadEvent};
 use hardware::profiler::HardwareProfiler;
 use input::coordinator::{HotkeyAction, KeyEdge, ShortcutCoordinator};
 use input::hotkey::{HotkeyManager, ShortcutState};
-use input::paster::{frontmost_pid, Paster};
+use input::paster::{frontmost_pid, next_target, Paster};
 use model::manager::ModelManager;
 use speech::{polish_transcript, WhisperEngine};
 use state::{with_state, AppSettings, AppStatus};
@@ -23,7 +26,7 @@ use tauri::image::Image;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIcon, TrayIconBuilder},
-    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Manager, WebviewWindowBuilder,
 };
 
 struct AppStateInternal {
@@ -40,7 +43,15 @@ struct AppStateInternal {
     hands_free: Arc<AtomicBool>,
     threads: i32,
     front_pid: Option<i32>,
+    /// Last app that was frontmost and was not VoiceFlow. A pill click makes
+    /// this process frontmost before capture starts, so the click itself is
+    /// not a safe place to read the target.
+    last_external_pid: Option<i32>,
     hotkey_error: Option<String>,
+    /// Bumped so a queued Escape registration from a finished take cannot land late.
+    escape_ticket: AtomicU64,
+    /// Set while a take is being committed so a live pass does not start behind it.
+    commit_gate: AtomicBool,
 }
 
 static APP_DATA: Mutex<Option<AppStateInternal>> = Mutex::new(None);
@@ -65,7 +76,10 @@ where
             hands_free: Arc::new(AtomicBool::new(false)),
             threads: 4,
             front_pid: None,
+            last_external_pid: None,
             hotkey_error: None,
+            escape_ticket: AtomicU64::new(0),
+            commit_gate: AtomicBool::new(false),
         });
     }
     f(data.as_mut().unwrap())
@@ -86,10 +100,9 @@ fn emit_error(app: &tauri::AppHandle, message: impl Into<String>) {
 }
 
 fn prepare_overlay(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("mic-overlay") {
-        let _ = window.set_always_on_top(true);
-        let _ = window.set_focusable(false);
-    }
+    // One window can only live on one display. prepare styles every pill;
+    // overlay::sync_overlays opens another pill for each extra display.
+    overlay::prepare_all(app);
 }
 
 fn current_session() -> u64 {
@@ -158,28 +171,60 @@ fn on_escape(app: tauri::AppHandle) {
     apply_action(&app, action);
 }
 
+fn on_option_double_tap(app: &tauri::AppHandle) {
+    let action = with_app_data(|d| d.coordinator.lock().unwrap().on_option_double_tap());
+    apply_action(app, action);
+}
+
 fn register_session_escape(app: &tauri::AppHandle) {
-    with_app_data(|d| {
-        let Some(hm) = d.hotkey_manager.as_mut() else {
-            return;
-        };
-        if hm.escape_is_registered() {
+    let app = app.clone();
+    let ticket = with_app_data(|d| d.escape_ticket.fetch_add(1, Ordering::SeqCst) + 1);
+    // Must not call global_shortcut() on this stack. See platform::defer_main.
+    platform::defer_main(move || {
+        let current = with_app_data(|d| d.escape_ticket.load(Ordering::SeqCst));
+        if current != ticket {
             return;
         }
-        if let Err(err) = hm.register_escape(app, move |handle, _, event| {
-            if event.state == ShortcutState::Pressed {
-                on_escape(handle.clone());
+        with_app_data(|d| {
+            let Some(hm) = d.hotkey_manager.as_mut() else {
+                return;
+            };
+            if hm.escape_is_registered() {
+                return;
             }
-        }) {
-            log::warn!("Escape hotkey failed: {err}");
-        }
+            if let Err(err) = hm.register_escape(&app, move |handle, _, event| {
+                if event.state == ShortcutState::Pressed {
+                    on_escape(handle.clone());
+                }
+            }) {
+                log::warn!("Escape hotkey failed: {err}");
+            }
+        });
+    });
+}
+
+fn unregister_session_escape(app: &tauri::AppHandle) {
+    let app = app.clone();
+    with_app_data(|d| {
+        d.escape_ticket.fetch_add(1, Ordering::SeqCst);
+    });
+    platform::defer_main(move || {
+        with_app_data(|d| {
+            if let Some(hm) = d.hotkey_manager.as_mut() {
+                hm.unregister_escape(&app);
+            }
+        });
     });
 }
 
 fn start_capture(app: &tauri::AppHandle, hands_free: bool) -> Result<(), String> {
+    // Read the focused app before the overlay or this process can become frontmost.
     let pid = frontmost_pid();
-    prepare_overlay(app);
     let timeout_ms = with_state(|s| s.settings.lock().unwrap().silence_timeout_ms);
+
+    if let Some(message) = audio::permission::denial_message() {
+        return Err(message);
+    }
 
     let already = with_app_data(|d| {
         d.recorder
@@ -190,7 +235,19 @@ fn start_capture(app: &tauri::AppHandle, hands_free: bool) -> Result<(), String>
     if already {
         with_app_data(|d| {
             d.hands_free.store(hands_free, Ordering::SeqCst);
-            d.front_pid = pid.or(d.front_pid);
+            let ours = std::process::id() as i32;
+            d.front_pid = next_target(d.last_external_pid.or(d.front_pid), pid, ours);
+            if let Some(target) = d.front_pid {
+                d.last_external_pid = Some(target);
+            }
+            if hands_free {
+                d.coordinator.lock().unwrap().ensure_button_session();
+                // A push-to-talk take can close the detector without committing.
+                // Hands-free has to see a fresh silence window.
+                let mut vad = d.vad.lock().unwrap();
+                vad.reset();
+                vad.set_silence_timeout_ms(timeout_ms);
+            }
         });
         emit_status(
             app,
@@ -203,11 +260,47 @@ fn start_capture(app: &tauri::AppHandle, hands_free: bool) -> Result<(), String>
         return Ok(());
     }
 
+    // The pill has to appear before the microphone opens. The hotkey callback
+    // used to reach the overlay event only after a lock that never returned.
+    emit_status(
+        app,
+        if hands_free {
+            AppStatus::HandsFree
+        } else {
+            AppStatus::Recording
+        },
+    );
+    prepare_overlay(app);
+    if hands_free {
+        with_app_data(|d| d.coordinator.lock().unwrap().ensure_button_session());
+    }
+
+    let preferred = with_state(|s| s.settings.lock().unwrap().microphone.clone());
+    let device = match preferred
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        Some(name) => match AudioRecorder::device_named(name) {
+            Ok(device) => Some(device),
+            Err(err) => {
+                log::warn!("{err}; using the default microphone");
+                None
+            }
+        },
+        None => None,
+    };
+
     let app_cb = app.clone();
     with_app_data(|d| {
         d.session.fetch_add(1, Ordering::SeqCst);
+        d.commit_gate.store(false, Ordering::SeqCst);
         d.hands_free.store(hands_free, Ordering::SeqCst);
-        d.front_pid = pid;
+        let ours = std::process::id() as i32;
+        d.front_pid = next_target(d.last_external_pid.or(d.front_pid), pid, ours);
+        if let Some(target) = d.front_pid {
+            d.last_external_pid = Some(target);
+        }
         {
             let mut vad = d.vad.lock().unwrap();
             vad.reset();
@@ -219,14 +312,16 @@ fn start_capture(app: &tauri::AppHandle, hands_free: bool) -> Result<(), String>
         let hands = Arc::clone(&d.hands_free);
         let app_level = app_cb.clone();
         let app_vad = app_cb.clone();
+        let level_meter = Arc::new(Mutex::new(LevelMeter::new()));
 
         recorder.set_chunk_callback(Arc::new(move |chunk: &[f32]| {
             if chunk.is_empty() {
                 return;
             }
-            let sum_sq: f32 = chunk.iter().map(|s| s * s).sum();
-            let rms = (sum_sq / chunk.len() as f32).sqrt();
-            let _ = app_level.emit("audio_level", (rms * 3.5).min(1.0));
+            let levels = level_meter.lock().unwrap().push(chunk);
+            if let Some(levels) = levels {
+                let _ = app_level.emit("audio_levels", levels);
+            }
 
             let event = vad.lock().unwrap().process_frame(chunk);
             let Some(event) = event else {
@@ -277,13 +372,15 @@ fn start_capture(app: &tauri::AppHandle, hands_free: bool) -> Result<(), String>
         }));
 
         recorder
-            .start_recording(None)
+            .start_recording(device)
             .map_err(|e| format!("Microphone unavailable: {e}"))?;
         d.recorder = Some(recorder);
         Ok::<(), String>(())
     })?;
 
     register_session_escape(app);
+    let session_id = current_session();
+    spawn_live_transcript(app, session_id);
     emit_status(
         app,
         if hands_free {
@@ -300,23 +397,26 @@ fn start_capture(app: &tauri::AppHandle, hands_free: bool) -> Result<(), String>
 }
 
 fn stop_capture(app: &tauri::AppHandle, transcribe: bool) {
+    unregister_session_escape(app);
+    with_app_data(|d| d.commit_gate.store(true, Ordering::SeqCst));
+    if transcribe {
+        with_app_data(|d| d.coordinator.lock().unwrap().mark_busy());
+    }
     let timeout_language = with_state(|s| {
         let settings = s.settings.lock().unwrap();
         (settings.auto_paste, settings.language.clone())
     });
 
-    let (samples, session_id, engine, threads, pid, auto_paste, language) = with_app_data(|d| {
+    let (samples, session_id, engine, threads, pid, auto_paste, language, stopped_mic) =
+        with_app_data(|d| {
         d.hands_free.store(false, Ordering::SeqCst);
-        if let Some(hm) = d.hotkey_manager.as_mut() {
-            hm.unregister_escape(app);
-        }
         d.vad.lock().unwrap().reset();
-        let samples = if d
+        let stopped_mic = d
             .recorder
             .as_ref()
             .map(|r| r.is_recording())
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        let samples = if stopped_mic {
             d.recorder.as_mut().unwrap().stop_recording()
         } else {
             Vec::new()
@@ -334,11 +434,21 @@ fn stop_capture(app: &tauri::AppHandle, transcribe: bool) {
             d.front_pid,
             timeout_language.0,
             timeout_language.1,
+            stopped_mic,
         )
     });
 
+    // A pause and a click can both commit the same take. The second caller
+    // finds the microphone already stopped and must not wipe the first result.
+    if transcribe && !stopped_mic {
+        return;
+    }
+
     if !transcribe || samples.len() < 4_800 {
         with_app_data(|d| d.coordinator.lock().unwrap().force_idle());
+        if transcribe {
+            let _ = app.emit("overlay_notice", serde_json::json!({ "kind": "no_sound" }));
+        }
         emit_status(app, AppStatus::Idle);
         return;
     }
@@ -380,10 +490,14 @@ fn stop_capture(app: &tauri::AppHandle, transcribe: bool) {
             Ok(text) => {
                 let polished = polish_transcript(&text);
                 if polished.trim().is_empty() {
+                    let _ = app_job.emit(
+                        "overlay_notice",
+                        serde_json::json!({ "kind": "no_sound" }),
+                    );
                     emit_status(&app_job, AppStatus::Idle);
                 } else {
                     let _ = app_job.emit("transcript", polished.clone());
-                    let mut hold = Duration::from_millis(900);
+                    let mut hold = Duration::from_millis(1_200);
                     if auto_paste {
                         let mut paster = with_app_data(|d| d.paster.take());
                         let paste_result = match paster.as_mut() {
@@ -401,7 +515,7 @@ fn stop_capture(app: &tauri::AppHandle, transcribe: bool) {
                             Ok(()) => emit_status(&app_job, AppStatus::Success),
                             Err(err) => {
                                 emit_error(&app_job, err.to_string());
-                                hold = Duration::from_secs(4);
+                                hold = Duration::from_secs(5);
                             }
                         }
                     } else {
@@ -539,7 +653,17 @@ fn toggle_recording(app: tauri::AppHandle) -> Result<String, String> {
         stop_capture(&app, true);
         Ok("stopped".into())
     } else {
-        start_capture(&app, false).map(|_| "recording".into())
+        // A click has nothing to hold. Speak, pause, and the take inserts itself.
+        match start_capture(&app, true) {
+            Ok(()) => Ok("hands_free".into()),
+            Err(err) => {
+                with_app_data(|d| {
+                    d.hands_free.store(false, Ordering::SeqCst);
+                    d.coordinator.lock().unwrap().force_idle();
+                });
+                Err(err)
+            }
+        }
     }
 }
 
@@ -550,8 +674,135 @@ fn start_hands_free(app: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn cancel_recording(app: tauri::AppHandle) -> Result<String, String> {
-    on_escape(app);
+    // The pill can start a capture while the shortcut machine is still idle.
+    // Escape used to no-op in that state, so the close button left the mic on
+    // and transcription never ran.
+    with_app_data(|d| {
+        d.tap_token.fetch_add(1, Ordering::SeqCst);
+        d.hands_free.store(false, Ordering::SeqCst);
+        d.coordinator.lock().unwrap().cancel_session();
+        // Invalidates an in-flight transcription, not only an open microphone.
+        d.session.fetch_add(1, Ordering::SeqCst);
+    });
+    let recording = with_app_data(|d| {
+        d.recorder
+            .as_ref()
+            .map(|r| r.is_recording())
+            .unwrap_or(false)
+    });
+    if recording {
+        stop_capture(&app, false);
+    } else {
+        emit_status(&app, AppStatus::Idle);
+    }
     Ok("cancelled".into())
+}
+
+/// While the mic is open, turn the buffer into words so the Handy sheet is not blank.
+fn spawn_live_transcript(app: &tauri::AppHandle, session_id: u64) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut last_len = 0usize;
+        let mut checks = 0u32;
+        let mut warned = false;
+        loop {
+            tokio::time::sleep(Duration::from_millis(280)).await;
+            if current_session() != session_id {
+                return;
+            }
+            checks += 1;
+            let language = with_state(|s| s.settings.lock().unwrap().language.clone());
+            let (recording, samples, total, engine, threads, peak, busy) = with_app_data(|d| {
+                let recording = d
+                    .recorder
+                    .as_ref()
+                    .map(|recorder| recorder.is_recording())
+                    .unwrap_or(false);
+                let peak = d.recorder.as_ref().map(|recorder| recorder.peak()).unwrap_or(0.0);
+                let total = d
+                    .recorder
+                    .as_ref()
+                    .map(|recorder| recorder.captured_len())
+                    .unwrap_or(0);
+                // The last five seconds is enough for the sheet. The full take
+                // is transcribed once, when the user pauses or releases the key.
+                let samples = d
+                    .recorder
+                    .as_ref()
+                    .map(|recorder| recorder.snapshot_tail(16_000 * 5))
+                    .unwrap_or_default();
+                (
+                    recording,
+                    samples,
+                    total,
+                    d.engine.clone(),
+                    d.threads,
+                    peak,
+                    d.commit_gate.load(Ordering::SeqCst),
+                )
+            });
+            if busy || !recording || current_session() != session_id {
+                return;
+            }
+            // Exact zeros mean the stream is open and the samples are empty.
+            // Keep recording so a late phrase still transcribes, but say why the
+            // sheet is blank instead of pretending the meter is listening.
+            if checks >= 8 && peak < 1.0e-4 && !warned {
+                warned = true;
+                let _ = app.emit(
+                    "capture_warning",
+                    "No microphone signal. Allow microphone access for VoiceFlow, or pick another input.",
+                );
+            }
+            if peak >= 1.0e-4 && warned {
+                warned = false;
+                let _ = app.emit("capture_warning", "");
+            }
+            if total < 8_000 || total < last_len + 6_400 {
+                continue;
+            }
+            let Some(engine) = engine else {
+                continue;
+            };
+            // A final pass needs this lock. Skip the preview rather than make
+            // the user wait through two full decodes.
+            if engine.try_lock().is_err() {
+                continue;
+            }
+            last_len = total;
+            let window = samples;
+            let lang = language.clone();
+            let work = tokio::task::spawn_blocking(move || {
+                let guard = match engine.try_lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return String::new(),
+                };
+                guard
+                    .transcribe_partial(&window, threads, &lang)
+                    .map(|text| polish_transcript(&text))
+                    .unwrap_or_default()
+            });
+            let text = match work.await {
+                Ok(text) => text,
+                Err(err) => {
+                    log::warn!("Live transcript failed: {err}");
+                    continue;
+                }
+            };
+            if current_session() != session_id || text.trim().is_empty() {
+                continue;
+            }
+            let still = with_app_data(|d| {
+                d.recorder
+                    .as_ref()
+                    .map(|recorder| recorder.is_recording())
+                    .unwrap_or(false)
+            });
+            if still {
+                let _ = app.emit("partial_transcript", text);
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -581,13 +832,7 @@ fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), S
     });
 
     if old_show_mic_widget != settings.show_mic_widget {
-        if let Some(window) = app.get_webview_window("mic-overlay") {
-            if settings.show_mic_widget {
-                let _ = window.show();
-            } else {
-                let _ = window.hide();
-            }
-        }
+        overlay::sync_overlays(&app);
     }
     let _ = app.emit("settings_changed", &settings);
 
@@ -608,28 +853,73 @@ fn get_status() -> AppStatus {
 }
 
 #[tauri::command]
-fn list_microphones() -> Result<Vec<String>, String> {
-    AudioRecorder::new()
-        .map_err(|e| e.to_string())?
-        .list_devices()
-        .map_err(|e| e.to_string())
+async fn list_microphones() -> Result<Vec<String>, String> {
+    // CoreAudio can stall inside cpal while it asks every input device for
+    // supported formats. That work used to run on the UI thread, so the
+    // window stayed white until the call returned.
+    let listed = tokio::task::spawn_blocking(|| {
+        AudioRecorder::new()
+            .map_err(|e| e.to_string())?
+            .list_devices()
+            .map_err(|e| e.to_string())
+    });
+    match tokio::time::timeout(Duration::from_secs(2), listed).await {
+        Ok(Ok(names)) => names,
+        Ok(Err(err)) => Err(format!("Could not list microphones: {err}")),
+        Err(_) => {
+            log::warn!("Listing microphones stalled; keeping the saved device");
+            Ok(Vec::new())
+        }
+    }
 }
 
 #[tauri::command]
 fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    // The installed app used to be a menu-bar agent. Opening it then showed
+    // only the small HUD, with no Dock icon and no way into settings.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    }
+
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
-    } else {
-        let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::App("index.html".into()))
-            .title("VoiceFlow")
-            .inner_size(820.0, 580.0)
-            .min_inner_size(760.0, 500.0)
-            .resizable(true)
-            .center()
-            .build()
-            .map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // Recreate from the same config Tauri uses at startup. Building a fresh
+    // webview during setup left this window blank on macOS.
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .cloned()
+        .ok_or_else(|| "Main window config is missing".to_string())?;
+    let window = WebviewWindowBuilder::from_config(&app, &config)
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn window_control(window: tauri::WebviewWindow, action: String) -> Result<(), String> {
+    match action.as_str() {
+        "close" => window.hide().map_err(|err| err.to_string())?,
+        "minimize" => window.minimize().map_err(|err| err.to_string())?,
+        "zoom" => {
+            if window.is_maximized().map_err(|err| err.to_string())? {
+                window.unmaximize().map_err(|err| err.to_string())?;
+            } else {
+                window.maximize().map_err(|err| err.to_string())?;
+            }
+        }
+        other => return Err(format!("Unknown window action: {other}")),
     }
     Ok(())
 }
@@ -658,9 +948,9 @@ fn toggle_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let open_item = MenuItem::with_id(app, "open", "Open VoiceFlow", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit VoiceFlow", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
     let icon = app.default_window_icon().cloned().or_else(|| {
         let mut rgba = Vec::with_capacity(16 * 16 * 4);
         for _ in 0..(16 * 16) {
@@ -673,13 +963,24 @@ fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     };
     let tray = TrayIconBuilder::new()
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .icon(icon)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "settings" => {
+            "open" | "settings" => {
                 let _ = show_main_window(app.clone());
             }
             "quit" => app.exit(0),
             _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let _ = show_main_window(tray.app_handle().clone());
+            }
         })
         .build(app)?;
     with_app_data(|d| d.tray = Some(tray));
@@ -728,6 +1029,18 @@ fn main() {
                     d.paster = Some(paster);
                 }
             });
+            input::paster::prompt_accessibility_if_needed();
+            std::thread::spawn(|| {
+                let ours = std::process::id() as i32;
+                loop {
+                    if let Some(pid) = frontmost_pid() {
+                        if pid != ours {
+                            with_app_data(|d| d.last_external_pid = Some(pid));
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(350));
+                }
+            });
 
             if let Some(path) = ModelManager::resolve_whisper_path(&settings.whisper_model) {
                 queue_model_load(app.handle(), path);
@@ -752,6 +1065,8 @@ fn main() {
             if let Err(err) = setup_tray(app.handle()) {
                 log::error!("Tray setup failed: {err}");
             }
+            // The main window is declared in tauri.conf.json. Building it here
+            // produced a blank white webview on macOS.
 
             let mut hm = HotkeyManager::new();
             let app_h = app.handle().clone();
@@ -772,11 +1087,30 @@ fn main() {
                     let app_err = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(800)).await;
-                        emit_error(&app_err, message);
+                        emit_error(&app_err, message.clone());
+                        tokio::time::sleep(Duration::from_secs(6)).await;
+                        let still_error = with_state(|s| {
+                            matches!(*s.status.lock().unwrap(), AppStatus::Error)
+                        });
+                        if still_error {
+                            emit_status(&app_err, AppStatus::Idle);
+                        }
                     });
                 }
             }
             with_app_data(|d| d.hotkey_manager = Some(hm));
+
+            if let Some(rx) = input::option_tap::start() {
+                let app_tap = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("voiceflow-option-dispatch".into())
+                    .spawn(move || {
+                        while rx.recv().is_ok() {
+                            on_option_double_tap(&app_tap);
+                        }
+                    })
+                    .ok();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -793,7 +1127,21 @@ fn main() {
             show_main_window,
             hide_main_window,
             toggle_main_window,
+            window_control,
+            overlay::save_overlay_position,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            // Dock click. The HUD counts as a visible window, so macOS will
+            // not surface the main window on its own.
+            tauri::RunEvent::Ready => {
+                overlay::start_watch(app.clone());
+                let _ = show_main_window(app.clone());
+            }
+            tauri::RunEvent::Reopen { .. } => {
+                let _ = show_main_window(app.clone());
+            }
+            _ => {}
+        });
 }

@@ -6,6 +6,11 @@ authors = ["Kenneth Aman"]
 edition = "2021"
 rust-version = "1.77"
 
+[features]
+# Production builds embed the frontend. Without this, the window loads the
+# dev server and stays blank when that server is not running.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -32,7 +37,7 @@ log = "0.4"
 env_logger = "0.11"
 libloading = "0.8"
 arboard = "3"
-whisper-rs = "0.14.2"
+whisper-rs = { version = "0.14.2", features = ["metal"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 sha2 = "0.10"

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -22,6 +22,19 @@ pub struct AudioRecorder {
     /// Fractional source position carried across callbacks so 48 kHz → 16 kHz
     /// does not drop a sample at every buffer boundary.
     resample_phase: Arc<Mutex<f64>>,
+    /// Loudest sample seen since the stream started, as f32 bits.
+    peak: Arc<AtomicU32>,
+}
+
+fn note_peak(slot: &AtomicU32, chunk: &[f32]) {
+    let mut best = f32::from_bits(slot.load(Ordering::Relaxed));
+    for sample in chunk {
+        let amp = sample.abs();
+        if amp.is_finite() && amp > best {
+            best = amp;
+        }
+    }
+    slot.store(best.to_bits(), Ordering::Relaxed);
 }
 
 unsafe impl Send for AudioRecorder {}
@@ -35,11 +48,47 @@ impl AudioRecorder {
             stream: Mutex::new(None),
             chunk_callback: None,
             resample_phase: Arc::new(Mutex::new(0.0)),
+            peak: Arc::new(AtomicU32::new(0)),
         })
     }
 
     pub fn set_chunk_callback(&mut self, cb: AudioChunkCallback) {
         self.chunk_callback = Some(cb);
+    }
+
+    /// Input whose name matches the settings picker. Falls back at the call site.
+    pub fn device_named(name: &str) -> Result<cpal::Device> {
+        let host = cpal::default_host();
+        let wanted = name.trim();
+        for device in host.input_devices().context("Could not list microphones")? {
+            if device.name().ok().as_deref().map(str::trim) == Some(wanted) {
+                return Ok(device);
+            }
+        }
+        anyhow::bail!("Microphone \"{wanted}\" is not connected")
+    }
+
+    /// Copy of the samples captured so far, for a live transcription pass.
+    pub fn snapshot(&self) -> Vec<f32> {
+        self.samples.lock().unwrap().clone()
+    }
+
+    pub fn captured_len(&self) -> usize {
+        self.samples.lock().unwrap().len()
+    }
+
+    /// Newest samples only, so a live pass does not decode the whole take.
+    pub fn snapshot_tail(&self, max_samples: usize) -> Vec<f32> {
+        let samples = self.samples.lock().unwrap();
+        if max_samples == 0 || samples.len() <= max_samples {
+            return samples.clone();
+        }
+        samples[samples.len() - max_samples..].to_vec()
+    }
+
+    /// Loudest absolute sample since `start_recording`. Zero means digital silence.
+    pub fn peak(&self) -> f32 {
+        f32::from_bits(self.peak.load(Ordering::Relaxed))
     }
 
     /// Get the default input device
@@ -111,6 +160,7 @@ impl AudioRecorder {
         // Clear previous samples
         self.samples.lock().unwrap().clear();
         *self.resample_phase.lock().unwrap() = 0.0;
+        self.peak.store(0, Ordering::SeqCst);
         self.is_recording.store(true, Ordering::SeqCst);
 
         let device = match device {
@@ -124,11 +174,17 @@ impl AudioRecorder {
 
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
+        log::info!(
+            "Microphone {} at {sample_rate} Hz, {channels} channels, {:?}",
+            device.name().unwrap_or_else(|_| "input".into()),
+            config.sample_format()
+        );
 
         let samples = Arc::clone(&self.samples);
         let is_recording = Arc::clone(&self.is_recording);
         let callback = self.chunk_callback.clone();
         let phase = Arc::clone(&self.resample_phase);
+        let peak = Arc::clone(&self.peak);
 
         let sample_format = config.sample_format();
         let stream_config: cpal::StreamConfig = config.into();
@@ -138,6 +194,7 @@ impl AudioRecorder {
                 let is_recording = Arc::clone(&is_recording);
                 let callback = callback.clone();
                 let phase = Arc::clone(&phase);
+                let peak = Arc::clone(&peak);
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -156,6 +213,7 @@ impl AudioRecorder {
                         if resampled.is_empty() {
                             return;
                         }
+                        note_peak(&peak, &resampled);
                         if let Some(ref cb) = callback {
                             cb(&resampled);
                         }
@@ -172,6 +230,7 @@ impl AudioRecorder {
                 let is_recording = Arc::clone(&is_recording);
                 let callback = callback.clone();
                 let phase = Arc::clone(&phase);
+                let peak = Arc::clone(&peak);
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -192,6 +251,7 @@ impl AudioRecorder {
                         if resampled.is_empty() {
                             return;
                         }
+                        note_peak(&peak, &resampled);
                         if let Some(ref cb) = callback {
                             cb(&resampled);
                         }

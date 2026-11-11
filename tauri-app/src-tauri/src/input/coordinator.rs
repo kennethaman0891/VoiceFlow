@@ -126,6 +126,26 @@ impl ShortcutCoordinator {
         }
     }
 
+    /// A click on the pill starts a session the shortcut machine must know about.
+    /// Otherwise Escape and the close button look idle and leave the mic running.
+    pub fn ensure_button_session(&mut self) {
+        if self.phase == Phase::Idle {
+            self.phase = Phase::HandsFree;
+        }
+    }
+
+    /// Always leave the shortcut machine idle. Callers stop the recorder themselves.
+    pub fn cancel_session(&mut self) -> HotkeyAction {
+        self.phase = Phase::Idle;
+        HotkeyAction::Cancel
+    }
+
+    pub fn mark_busy(&mut self) {
+        if self.phase != Phase::Idle {
+            self.phase = Phase::Busy;
+        }
+    }
+
     pub fn pending_deadline(&self) -> Option<Instant> {
         match self.phase {
             Phase::Pending { down_at } => Some(down_at + self.double_window),
@@ -139,6 +159,30 @@ impl ShortcutCoordinator {
 
     pub fn is_hands_free(&self) -> bool {
         self.phase == Phase::HandsFree
+    }
+
+    /// Double-tap of the Option key alone. Hold Option+Space is unchanged.
+    /// A second double-tap commits the take. Escape still cancels.
+    pub fn on_option_double_tap(&mut self) -> HotkeyAction {
+        if !self.double_tap_enabled {
+            return HotkeyAction::None;
+        }
+        match self.phase {
+            Phase::Idle => {
+                self.phase = Phase::HandsFree;
+                HotkeyAction::StartHandsFree
+            }
+            Phase::HandsFree => {
+                self.phase = Phase::Busy;
+                HotkeyAction::StopAndTranscribe
+            }
+            Phase::Busy => {
+                self.phase = Phase::Idle;
+                HotkeyAction::Cancel
+            }
+            // An Option+Space hold or a pending blip owns the machine.
+            Phase::Holding { .. } | Phase::Pending { .. } => HotkeyAction::None,
+        }
     }
 }
 
@@ -208,6 +252,36 @@ mod tests {
         c.on_edge(KeyEdge::Down, start);
         assert_eq!(c.on_escape(), HotkeyAction::Cancel);
         assert_eq!(c.on_escape(), HotkeyAction::None);
+    }
+
+    #[test]
+    fn pill_session_can_be_cancelled_after_the_shortcut_machine_was_idle() {
+        let mut c = ShortcutCoordinator::new();
+        c.ensure_button_session();
+        assert!(c.is_hands_free());
+        assert_eq!(c.cancel_session(), HotkeyAction::Cancel);
+        assert!(!c.is_hands_free());
+        assert_eq!(c.cancel_session(), HotkeyAction::Cancel);
+    }
+
+    #[test]
+    fn option_double_tap_starts_hands_free_and_the_next_one_commits() {
+        let mut c = ShortcutCoordinator::new();
+        assert_eq!(c.on_option_double_tap(), HotkeyAction::StartHandsFree);
+        assert!(c.is_hands_free());
+        assert_eq!(c.on_option_double_tap(), HotkeyAction::StopAndTranscribe);
+    }
+
+    #[test]
+    fn option_double_tap_respects_the_setting_and_an_open_hold() {
+        let mut c = ShortcutCoordinator::new();
+        c.set_double_tap_enabled(false);
+        assert_eq!(c.on_option_double_tap(), HotkeyAction::None);
+
+        let mut c = ShortcutCoordinator::new();
+        let start = t0();
+        c.on_edge(KeyEdge::Down, start);
+        assert_eq!(c.on_option_double_tap(), HotkeyAction::None);
     }
 
     #[test]
