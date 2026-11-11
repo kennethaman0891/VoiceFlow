@@ -86,7 +86,7 @@ export default function GeneralView({
         <div className="settings-card">
           <SettingRow
             label="Transcribe Shortcut"
-            tooltip="Global hotkey to activate speech dictation from any application or window."
+            tooltip="Hold Option+Space to dictate. Double-tap the Option key for hands-free: VoiceFlow listens until you pause, then inserts the text. Double-tap Option again to insert early. Escape cancels."
             onReset={() => onResetKey('transcribeShortcut')}
           >
             <button
@@ -113,6 +113,9 @@ export default function GeneralView({
               <span className="toggle-slider" />
             </label>
           </SettingRow>
+          <p className="hotkey-caption">
+            Hold Option+Space to dictate. Double-tap Option for hands-free.
+          </p>
         </div>
       </section>
 

@@ -70,7 +70,7 @@ export default function HistoryView({ transcript, onClearHistory }: HistoryViewP
         {filtered.length === 0 ? (
           <div className="history-empty">
             {transcript.length === 0
-              ? 'No dictation history yet. Hold Option+Space to start speaking!'
+              ? 'No dictation history yet. Hold Option+Space, or double-tap Option for hands-free.'
               : 'No transcripts match your search.'}
           </div>
         ) : (

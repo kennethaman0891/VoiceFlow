@@ -140,14 +140,14 @@ export default function SettingsPanel({
 
         {/* Hotkey notice */}
         <div className="setting-hint" style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 10px', borderRadius: '6px' }}>
-          💡 <strong>Global Hotkey:</strong> <kbd>Option+Space</kbd> (macOS) / <kbd>Ctrl+Space</kbd> (Win/Linux). Tap <kbd>Esc</kbd> anytime to cancel.
+          💡 <strong>Global Hotkey:</strong> hold <kbd>Option+Space</kbd> to dictate. Double-tap <kbd>Option</kbd> for hands-free. <kbd>Esc</kbd> cancels.
         </div>
 
         {/* Wispr Flow Double-Click & VAD Section */}
         <div className="setting-group setting-row">
           <div>
             <label>Hands-Free Double-Tap</label>
-            <div className="setting-hint">Double-tap hotkey to toggle hands-free dictation</div>
+            <div className="setting-hint">Double-tap Option to dictate hands-free, without holding a key</div>
           </div>
           <input
             type="checkbox"

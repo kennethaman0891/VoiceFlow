@@ -1,66 +1,52 @@
 import React from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
+
+type WindowAction = 'close' | 'minimize' | 'zoom';
+
+function control(action: WindowAction) {
+  invoke('window_control', { action }).catch((error) => {
+    console.error(`Window ${action} failed`, error);
+  });
+}
+
+function onPress(event: React.MouseEvent<HTMLButtonElement>, action: WindowAction) {
+  event.preventDefault();
+  event.stopPropagation();
+  control(action);
+}
 
 export default function TitleBar() {
-  const handleClose = async () => {
-    try {
-      const win = getCurrentWindow();
-      await win.hide();
-    } catch {
-      // In web browser context
-      window.close();
-    }
-  };
-
-  const handleMinimize = async () => {
-    try {
-      const win = getCurrentWindow();
-      await win.minimize();
-    } catch {
-      // Ignore in web context
-    }
-  };
-
-  const handleZoom = async () => {
-    try {
-      const win = getCurrentWindow();
-      const isMaximized = await win.isMaximized();
-      if (isMaximized) {
-        await win.unmaximize();
-      } else {
-        await win.maximize();
-      }
-    } catch {
-      // Ignore in web context
-    }
-  };
-
   return (
     <header className="desktop-titlebar">
       <div className="traffic-lights">
         <button
           type="button"
           className="traffic-light close"
-          onClick={handleClose}
-          title="Close window"
+          title="Close"
           aria-label="Close"
+          data-tauri-drag-region="false"
+          onMouseDown={(event) => onPress(event, 'close')}
         />
         <button
           type="button"
           className="traffic-light minimize"
-          onClick={handleMinimize}
-          title="Minimize window"
+          title="Minimize"
           aria-label="Minimize"
+          data-tauri-drag-region="false"
+          onMouseDown={(event) => onPress(event, 'minimize')}
         />
         <button
           type="button"
           className="traffic-light zoom"
-          onClick={handleZoom}
-          title="Zoom window"
+          title="Zoom"
           aria-label="Zoom"
+          data-tauri-drag-region="false"
+          onMouseDown={(event) => onPress(event, 'zoom')}
         />
       </div>
-      <div className="titlebar-title">VoiceFlow</div>
+      <div className="titlebar-drag" data-tauri-drag-region>
+        <div className="titlebar-title">VoiceFlow</div>
+      </div>
     </header>
   );
 }

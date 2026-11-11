@@ -1,11 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  getCurrentWindow,
-  currentMonitor,
-  primaryMonitor,
-  LogicalSize,
-  PhysicalPosition,
-} from '@tauri-apps/api/window';
+import React, { useEffect, useRef, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
 import { useAudioVisualizer } from '../hooks/useAudioVisualizer';
 import { AppStatus } from '../types';
 import './FloatingHUD.css';
@@ -14,491 +9,396 @@ interface FloatingHUDProps {
   status: AppStatus;
   liveTranscript?: string;
   errorMessage?: string;
+  shortcut?: string;
+  notice?: string | null;
+  captureWarning?: string;
   onToggleRecording: () => void;
   onCancel: () => void;
+  onOpen?: () => void;
   visible?: boolean;
 }
 
-const STORAGE_KEY = 'voiceflow::widget-pos';
-const PILL_WIDTH = 320;
-const PILL_HEIGHT = 56;
-const EXPANDED_WIDTH = 460;
-const EXPANDED_HEIGHT = 130;
-const SUCCESS_WIDTH = 260;
-const SUCCESS_HEIGHT = 52;
-const ERROR_WIDTH = 440;
-const ERROR_HEIGHT = 76;
+type Posture =
+  | 'idle'
+  | 'arming'
+  | 'listening'
+  | 'transcribing'
+  | 'polishing'
+  | 'pasted'
+  | 'no_sound'
+  | 'copied'
+  | 'error';
+
+const MODIFIERS: Record<string, string> = {
+  'left option': '⌥',
+  'right option': '⌥',
+  option: '⌥',
+  alt: '⌥',
+  'left command': '⌘',
+  'right command': '⌘',
+  command: '⌘',
+  meta: '⌘',
+  'left control': '⌃',
+  'right control': '⌃',
+  control: '⌃',
+  ctrl: '⌃',
+  shift: '⇧',
+  'left shift': '⇧',
+  'right shift': '⇧',
+};
+
+export function shortcutKeys(raw: string): string[] {
+  const parts = raw
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return ['Space'];
+  return parts.map((part) => {
+    const symbol = MODIFIERS[part.toLowerCase()];
+    if (symbol) return symbol;
+    if (part.toLowerCase() === 'space') return 'Space';
+    return part.length === 1 ? part.toUpperCase() : part;
+  });
+}
+
+function barHeight(level: number): number {
+  const v = Math.max(0, Math.min(1, level));
+  return Math.max(3, Math.min(18, 3 + Math.pow(v, 0.7) * 15));
+}
+
+function Logo({ mode }: { mode: 'idle' | 'arming' | 'live' | 'done' | 'bad' }) {
+  return (
+    <div className={`vf-logo ${mode}`} aria-hidden="true">
+      <span className="vf-logo-bars">
+        <i />
+        <i />
+        <i />
+        <i />
+      </span>
+    </div>
+  );
+}
+
+function CancelButton({ onCancel }: { onCancel: () => void }) {
+  return (
+    <button
+      type="button"
+      className="vf-cancel"
+      aria-label="Cancel"
+      title="Cancel (Esc)"
+      data-tauri-drag-region="false"
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
+        <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
 
 export default function FloatingHUD({
   status,
   liveTranscript = '',
   errorMessage = '',
+  shortcut = 'Left Option + Space',
+  notice = null,
+  captureWarning = '',
   onToggleRecording,
   onCancel,
+  onOpen,
   visible = true,
 }: FloatingHUDProps) {
   const isRecording = status === 'recording' || status === 'hands_free';
-  const isHandsFree = status === 'hands_free';
   const hasText = liveTranscript.trim().length > 0;
-  const isExpanded = hasText && (isRecording || status === 'transcribing' || status === 'success');
+  const copied = status === 'error' && errorMessage.trim().toLowerCase().startsWith('copied');
+  const { audioBars, captureReady, isCountingDown, remainingMs } = useAudioVisualizer(isRecording);
+
+  const posture: Posture = notice === 'no_sound' && status === 'idle'
+    ? 'no_sound'
+    : copied || notice === 'copied'
+      ? 'copied'
+      : status === 'error'
+        ? 'error'
+        : status === 'success'
+          ? 'pasted'
+          : status === 'cleaning'
+            ? 'polishing'
+            : status === 'transcribing'
+              ? 'transcribing'
+              : isRecording
+                ? captureReady
+                  ? 'listening'
+                  : 'arming'
+                : 'idle';
+
+  const working = posture === 'transcribing' || posture === 'polishing';
+  const warning = captureWarning.trim();
+  // Handy keeps the transcript sheet open for the whole take, including the
+  // moment before the first word arrives. Waiting for text left that area blank.
+  const open =
+    posture === 'arming' ||
+    posture === 'listening' ||
+    working ||
+    (posture === 'error' && errorMessage.trim().length > 0) ||
+    ((posture === 'pasted' || posture === 'copied') && hasText);
+  const showCancel = isRecording || working || posture === 'error' || posture === 'copied';
+  const showCaret = (posture === 'listening' || posture === 'arming') && !warning;
 
   const [seconds, setSeconds] = useState(0);
-  const textEndRef = useRef<HTMLDivElement>(null);
+  const textCapRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true);
+  const dragged = useRef(false);
 
-  const { audioBars, isCountingDown, countdownProgress, remainingMs } = useAudioVisualizer(isRecording);
-
-  const currentSizeRef = useRef<{ width: number; height: number }>({
-    width: PILL_WIDTH,
-    height: PILL_HEIGHT,
-  });
-  const isResizingRef = useRef(false);
-  const isFirstRender = useRef(true);
-  const moveDebounceRef = useRef<number | null>(null);
-
-  // Initial Placement & Persistence
-  useEffect(() => {
-    let unlistenMoved: (() => void) | undefined;
-
-    const initializePosition = async () => {
-      try {
-        const win = getCurrentWindow();
-        const monitor = (await currentMonitor()) || (await primaryMonitor());
-        const scale = (await win.scaleFactor().catch(() => monitor?.scaleFactor || 1)) || 1;
-
-        const monX = monitor?.position?.x ?? 0;
-        const monY = monitor?.position?.y ?? 0;
-        const monW = monitor?.size?.width ?? 1920;
-        const monH = monitor?.size?.height ?? 1080;
-
-        const widgetPhysW = Math.round(PILL_WIDTH * scale);
-        const widgetPhysH = Math.round(PILL_HEIGHT * scale);
-
-        // Default bottom-center: centered horizontally, 120 logical px above monitor bottom
-        const defaultX = monX + Math.round((monW - widgetPhysW) / 2);
-        const defaultY = monY + monH - Math.round(120 * scale) - widgetPhysH;
-
-        let initialX = defaultX;
-        let initialY = defaultY;
-
-        const savedRaw = localStorage.getItem(STORAGE_KEY);
-        if (savedRaw) {
-          try {
-            const saved = JSON.parse(savedRaw);
-            if (typeof saved.x === 'number' && typeof saved.y === 'number') {
-              // Sanity check coordinates to ensure widget is on-screen
-              const minX = monX;
-              const maxX = monX + monW - Math.round(60 * scale);
-              const minY = monY;
-              const maxY = monY + monH - Math.round(40 * scale);
-
-              if (saved.x >= minX - 60 && saved.x <= maxX && saved.y >= minY - 40 && saved.y <= maxY) {
-                initialX = Math.round(Math.max(minX, Math.min(saved.x, monX + monW - widgetPhysW)));
-                initialY = Math.round(Math.max(minY, Math.min(saved.y, monY + monH - widgetPhysH)));
-              }
-            }
-          } catch {
-            // Use defaults if parse fails
-          }
-        }
-
-        // Apply initial position and size
-        await win.setPosition(new PhysicalPosition(initialX, initialY));
-        await win.setSize(new LogicalSize(PILL_WIDTH, PILL_HEIGHT));
-
-        // Listen to window movement (debounced ~250ms)
-        const unlisten = await win.onMoved(async () => {
-          if (isResizingRef.current) return;
-
-          if (moveDebounceRef.current) {
-            window.clearTimeout(moveDebounceRef.current);
-          }
-
-          moveDebounceRef.current = window.setTimeout(async () => {
-            try {
-              if (isResizingRef.current) return;
-              const pos = await win.outerPosition();
-              const sFactor = (await win.scaleFactor().catch(() => 1)) || 1;
-
-              // Normalize to base pill position so restorations on relaunch match anchor
-              const curH = currentSizeRef.current.height;
-              const curW = currentSizeRef.current.width;
-              const deltaH = (curH - PILL_HEIGHT) * sFactor;
-              const deltaW = (curW - PILL_WIDTH) * sFactor;
-              const pillX = Math.round(pos.x + deltaW / 2);
-              const pillY = Math.round(pos.y + deltaH);
-
-              localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: pillX, y: pillY }));
-            } catch {
-              // Ignore in web context
-            }
-          }, 250);
-        });
-
-        unlistenMoved = unlisten;
-      } catch (err) {
-        console.error('HUD positioning initialization error:', err);
-      }
-    };
-
-    initializePosition();
-
-    return () => {
-      if (moveDebounceRef.current) {
-        window.clearTimeout(moveDebounceRef.current);
-      }
-      if (unlistenMoved) {
-        unlistenMoved();
-      }
-    };
-  }, []);
-
-  // Smooth Bottom-Anchored Resizing
-  useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-
-    const targetSize = isExpanded
-      ? { width: EXPANDED_WIDTH, height: EXPANDED_HEIGHT }
-      : status === 'error'
-      ? { width: ERROR_WIDTH, height: ERROR_HEIGHT }
-      : status === 'success'
-      ? { width: SUCCESS_WIDTH, height: SUCCESS_HEIGHT }
-      : { width: PILL_WIDTH, height: PILL_HEIGHT };
-
-    const oldSize = currentSizeRef.current;
-    if (oldSize.width === targetSize.width && oldSize.height === targetSize.height) {
-      return;
-    }
-
-    currentSizeRef.current = targetSize;
-
-    const resizeBottomAnchored = async () => {
-      try {
-        const win = getCurrentWindow();
-        const scale = (await win.scaleFactor().catch(() => 1)) || 1;
-        const deltaY = Math.round((targetSize.height - oldSize.height) * scale);
-        const deltaX = Math.round((targetSize.width - oldSize.width) * scale);
-
-        isResizingRef.current = true;
-        const pos = await win.outerPosition();
-
-        // Adjust position upward (and center horizontally) so expansion is bottom-anchored
-        await win.setPosition(
-          new PhysicalPosition(
-            pos.x - Math.round(deltaX / 2),
-            pos.y - deltaY
-          )
-        );
-        await win.setSize(new LogicalSize(targetSize.width, targetSize.height));
-
-        window.setTimeout(() => {
-          isResizingRef.current = false;
-        }, 350);
-      } catch {
-        isResizingRef.current = false;
-      }
-    };
-
-    resizeBottomAnchored();
-  }, [isExpanded, status]);
-
-  // Recording timer
   useEffect(() => {
     let timer: number | null = null;
-    if (isRecording) {
-      timer = window.setInterval(() => setSeconds(s => s + 1), 1000);
-    } else {
+    if (isRecording && captureReady) {
+      timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
+    } else if (!isRecording) {
       setSeconds(0);
     }
     return () => {
-      if (timer) clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
-  }, [isRecording]);
+  }, [isRecording, captureReady]);
 
-  // Auto-scroll live transcript
   useEffect(() => {
-    if (textEndRef.current) {
-      textEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [liveTranscript]);
+    const cap = textCapRef.current;
+    if (!cap || !pinnedRef.current) return;
+    cap.scrollTop = cap.scrollHeight;
+  }, [liveTranscript, open]);
 
-  // Global Esc key listener
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && (isRecording || status === 'transcribing' || status === 'error')) {
-        e.preventDefault();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && posture !== 'idle' && posture !== 'pasted' && posture !== 'no_sound') {
+        event.preventDefault();
         onCancel();
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRecording, status, onCancel]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [posture, onCancel]);
+
+  useEffect(() => {
+    let unlistenMoved: (() => void) | undefined;
+    let cancelled = false;
+    // Rust puts one pill on each display. This only remembers a drag,
+    // per display, so a second screen is not pulled back onto the first.
+    const remember = async () => {
+      try {
+        const win = getCurrentWindow();
+        unlistenMoved = await win.onMoved(async () => {
+          if (cancelled) return;
+          try {
+            const pos = await win.outerPosition();
+            await invoke('save_overlay_position', { x: pos.x, y: pos.y });
+          } catch {
+            // Browser preview has no window.
+          }
+        });
+      } catch {
+        // Browser preview has no Tauri window. The card still renders.
+      }
+    };
+    remember();
+    return () => {
+      cancelled = true;
+      if (unlistenMoved) unlistenMoved();
+    };
+  }, []);
 
   if (!visible) return null;
 
-  const formatTimer = (totalSec: number) => {
-    const mins = Math.floor(totalSec / 60);
-    const secs = totalSec % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  const formatTimer = (total: number) => {
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
   };
 
-  const handleDragStart = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement | null;
-    if (!target) return;
-    if (
-      target.closest('[data-tauri-drag-region="false"]') ||
-      target.closest('button') ||
-      target.closest('.mic-indicator-wrapper') ||
-      target.closest('.hud-transcript-body')
-    ) {
-      return;
-    }
-    try {
-      getCurrentWindow().startDragging().catch(() => {});
-    } catch {
-      // Ignore
+  const handleDragStart = (event: React.MouseEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || target.closest('button') || target.closest('.vf-text-cap')) return;
+    dragged.current = false;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const move = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (dx * dx + dy * dy < 16) return;
+      dragged.current = true;
+      window.removeEventListener('mousemove', move);
+      try {
+        getCurrentWindow().startDragging().catch(() => {});
+      } catch {
+        // Browser preview.
+      }
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  const handleCardClick = () => {
+    if (dragged.current) return;
+    // Idle starts hands-free. A second click commits the take into the focused field.
+    // Escape and the close button still discard it.
+    if (posture === 'idle' || posture === 'arming' || posture === 'listening') {
+      onToggleRecording();
     }
   };
 
-  const handleGripMouseDown = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      getCurrentWindow().startDragging().catch(() => {});
-    } catch {
-      // Ignore
-    }
+  const handleScroll = () => {
+    const cap = textCapRef.current;
+    if (!cap) return;
+    pinnedRef.current = cap.scrollHeight - cap.scrollTop - cap.clientHeight <= 16;
   };
 
-  // 6-dot drag handle icon component
-  const dragGripHandle = (
-    <div
-      className="hud-drag-handle"
-      data-tauri-drag-region
-      onMouseDown={handleGripMouseDown}
-      title="Drag to reposition"
-    >
-      <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor">
-        <circle cx="2" cy="2" r="1.2" />
-        <circle cx="6" cy="2" r="1.2" />
-        <circle cx="2" cy="7" r="1.2" />
-        <circle cx="6" cy="7" r="1.2" />
-        <circle cx="2" cy="12" r="1.2" />
-        <circle cx="6" cy="12" r="1.2" />
-      </svg>
-    </div>
-  );
+  const logoMode =
+    posture === 'pasted'
+      ? 'done'
+      : posture === 'error'
+        ? 'bad'
+        : posture === 'arming' || posture === 'no_sound' || posture === 'copied'
+          ? 'arming'
+          : posture === 'listening' || working
+            ? 'live'
+            : 'idle';
 
-  // Success State
-  if (status === 'success') {
-    return (
-      <div className="voice-hud-root" onMouseDown={handleDragStart} data-tauri-drag-region>
-        <div className="hud-capsule success-state" data-tauri-drag-region>
-          {dragGripHandle}
-          <div className="success-icon-badge" data-tauri-drag-region="false">
-            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
-              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-            </svg>
-          </div>
-          <span className="success-label" data-tauri-drag-region>Pasted to cursor!</span>
-        </div>
-      </div>
+  const keys = shortcutKeys(shortcut);
+
+  let center: React.ReactNode;
+  let right: React.ReactNode;
+
+  if (posture === 'idle') {
+    center = (
+      <>
+        <span className="vf-bars breath" aria-hidden="true">
+          <i /><i /><i /><i /><i />
+        </span>
+        <span className="vf-word">VoiceFlow</span>
+      </>
     );
-  }
-
-  // Cleaning State
-  if (status === 'cleaning') {
-    return (
-      <div className="voice-hud-root" onMouseDown={handleDragStart} data-tauri-drag-region>
-        <div className="hud-capsule cleaning-state" data-tauri-drag-region>
-          {dragGripHandle}
-          <div className="cleaning-spinner" data-tauri-drag-region="false" />
-          <span className="cleaning-label" data-tauri-drag-region>Polishing transcript...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Error State
-  if (status === 'error') {
-    return (
-      <div className="voice-hud-root" onMouseDown={handleDragStart} data-tauri-drag-region>
-        <div className="hud-capsule error-state" data-tauri-drag-region>
-          {dragGripHandle}
-          <span className="error-label" data-tauri-drag-region>{errorMessage || 'Something went wrong'}</span>
+    right = (
+      <>
+        <span className="vf-keys" title="Hold Option+Space to dictate. Double-tap Option, or click the pill, for hands-free.">
+          {keys.map((key, index) => (
+            <span className="vf-key" key={`${key}-${index}`}>{key}</span>
+          ))}
+          <span className="vf-talk">to talk</span>
+        </span>
+        {onOpen ? (
           <button
-            className="hud-cancel-btn"
+            type="button"
+            className="vf-open"
+            aria-label="Open VoiceFlow"
+            title="Open VoiceFlow"
             data-tauri-drag-region="false"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCancel();
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen();
             }}
-            title="Dismiss"
           >
-            ✕
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Transcribing State
-  if (status === 'transcribing') {
-    return (
-      <div className="voice-hud-root" onMouseDown={handleDragStart} data-tauri-drag-region>
-        <div className={`hud-container ${isExpanded ? 'expanded' : 'pill'}`} data-tauri-drag-region>
-          <div className="hud-header" data-tauri-drag-region>
-            {dragGripHandle}
-            <div className="cleaning-spinner" data-tauri-drag-region="false" />
-            <span className="cleaning-label" data-tauri-drag-region>Transcribing audio...</span>
-            <button
-              className="hud-cancel-btn"
-              data-tauri-drag-region="false"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCancel();
-              }}
-              title="Cancel (Esc)"
-            >
-              ✕
-            </button>
-          </div>
-          {isExpanded && (
-            <div className="hud-transcript-body" data-tauri-drag-region="false">
-              <div className="transcript-scroll-area" data-tauri-drag-region="false">
-                <p className="transcript-text" data-tauri-drag-region="false">
-                  {liveTranscript}
-                  <span className="live-typing-caret" />
-                </p>
-                <div ref={textEndRef} />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Recording or Idle State
-  return (
-    <div className="voice-hud-root" onMouseDown={handleDragStart} data-tauri-drag-region>
-      <div
-        className={`hud-container ${isExpanded ? 'expanded' : 'pill'} ${isCountingDown ? 'counting-down' : ''}`}
-        data-tauri-drag-region
-      >
-        {/* Top Control Header */}
-        <div className="hud-header" data-tauri-drag-region>
-          {/* Drag Grip Handle */}
-          {dragGripHandle}
-
-          {/* Mic Button with Radial Silence Countdown */}
-          <div
-            className="mic-indicator-wrapper"
-            data-tauri-drag-region="false"
-            onClick={onToggleRecording}
-            title={isRecording ? "Click to Stop (or press shortcut)" : "Click to Record (or double-tap for Hands-Free)"}
-          >
-            <svg className="silence-ring-svg" viewBox="0 0 32 32">
-              <circle cx="16" cy="16" r="13" className="ring-track" />
-              {isCountingDown && (
-                <circle
-                  cx="16"
-                  cy="16"
-                  r="13"
-                  className="ring-progress"
-                  style={{
-                    strokeDasharray: 81.68,
-                    strokeDashoffset: 81.68 * countdownProgress,
-                  }}
-                />
-              )}
+            <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+              <rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" />
             </svg>
+          </button>
+        ) : null}
+      </>
+    );
+  } else if (posture === 'arming' || posture === 'listening') {
+    center = (
+      <span className={`vf-bars ${posture === 'arming' ? 'arming' : ''}`} aria-hidden="true">
+        {audioBars.map((level, index) => (
+          <i key={index} style={{ height: `${Math.round(barHeight(posture === 'arming' ? 0 : level))}px` }} />
+        ))}
+      </span>
+    );
+    right = (
+      <>
+        {status === 'hands_free' ? <span className="vf-talk">hands-free</span> : null}
+        <span className={`vf-timer ${isCountingDown ? 'warn' : ''}`}>
+          {isCountingDown ? `${(remainingMs / 1000).toFixed(1)}s` : captureReady ? formatTimer(seconds) : '0:00'}
+        </span>
+        <CancelButton onCancel={onCancel} />
+      </>
+    );
+  } else if (working) {
+    center = (
+      <>
+        <span className="vf-spinner" aria-hidden="true" />
+        <span className="vf-label">{posture === 'polishing' ? 'Polishing…' : 'Transcribing…'}</span>
+      </>
+    );
+    right = <CancelButton onCancel={onCancel} />;
+  } else if (posture === 'pasted') {
+    center = <span className="vf-label">Pasted</span>;
+    right = null;
+  } else if (posture === 'no_sound') {
+    center = <span className="vf-label">No sound detected</span>;
+    right = null;
+  } else if (posture === 'copied') {
+    center = <span className="vf-label">Copied · ⌘V to paste</span>;
+    right = showCancel ? <CancelButton onCancel={onCancel} /> : null;
+  } else {
+    center = <span className="vf-label">{errorMessage || 'Something went wrong'}</span>;
+    right = <CancelButton onCancel={onCancel} />;
+  }
 
-            <div className={`mic-circle ${isRecording ? 'active' : ''}`}>
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-                <path d="M19 10a7 7 0 0 1-14 0"/>
-                <line x1="12" y1="19" x2="12" y2="22"/>
-              </svg>
-            </div>
-          </div>
+  const cardClass = [
+    'vf-card',
+    posture,
+    open ? 'open' : '',
+    working && !open ? 'working' : '',
+    posture === 'pasted' || posture === 'no_sound' || posture === 'copied' ? 'toast' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
-          {/* Hands-Free Badge (Wispr Flow style) */}
-          {isHandsFree ? (
-            <div className="badge-hands-free" data-tauri-drag-region="false">
-              <span className="badge-icon">∞</span>
-              <span className="badge-text">HANDS-FREE</span>
-            </div>
-          ) : (
-            isRecording && (
-              <div className="badge-rec" data-tauri-drag-region="false">
-                <span className="rec-dot" />
-                <span className="badge-text">REC</span>
-              </div>
-            )
-          )}
-
-          {/* Live Waveform (Handy style) */}
-          <div className="waveform-cluster" data-tauri-drag-region>
-            {audioBars.map((heightScale, i) => (
-              <span
-                key={i}
-                className="wave-bar"
-                style={{
-                  height: `${Math.round(4 + heightScale * 18)}px`,
-                  opacity: Math.max(0.4, heightScale),
-                }}
-              />
-            ))}
-          </div>
-
-          {/* Duration Timer */}
-          <div className="duration-timer" data-tauri-drag-region>
-            {isRecording ? formatTimer(seconds) : 'VoiceFlow'}
-          </div>
-
-          {/* Action Hints or Countdown Alert */}
-          <div className="hud-action-hints" data-tauri-drag-region>
-            {isCountingDown ? (
-              <span className="silence-warn-text">Auto-pasting in {(remainingMs / 1000).toFixed(1)}s</span>
-            ) : isHandsFree ? (
-              <span className="hint-text">Double-tap stop • Esc</span>
-            ) : isRecording ? (
-              <span className="hint-text">Release/Tap to stop</span>
-            ) : (
-              <span className="hint-text">⌥ Space to talk</span>
-            )}
-          </div>
-
-          {/* Cancel button if active */}
-          {isRecording && (
-            <button
-              className="hud-cancel-btn"
-              data-tauri-drag-region="false"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCancel();
-              }}
-              title="Cancel (Esc)"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        {/* Live Streaming Transcript Panel */}
-        {isExpanded && (
-          <div className="hud-transcript-body" data-tauri-drag-region="false">
-            <div className="transcript-scroll-area" data-tauri-drag-region="false">
-              <p className="transcript-text" data-tauri-drag-region="false">
-                {liveTranscript}
-                <span className="live-typing-caret" />
+  return (
+    <div className="voice-hud-root">
+      <div
+        className={cardClass}
+        role="status"
+        aria-live="polite"
+        aria-label="VoiceFlow dictation"
+        data-tauri-drag-region
+        onMouseDown={handleDragStart}
+        onClick={handleCardClick}
+      >
+        <div className="vf-text">
+          <div className="vf-text-clip">
+            <div className="vf-text-cap" ref={textCapRef} onScroll={handleScroll} data-tauri-drag-region="false">
+              <p className={hasText ? '' : 'vf-placeholder'}>
+                {open
+                  ? posture === 'error' && errorMessage.trim()
+                    ? errorMessage
+                    : hasText
+                      ? liveTranscript
+                      : warning || (working ? 'Transcribing…' : status === 'hands_free' ? 'Hands-free · pause to insert' : 'Listening…')
+                  : null}
+                {showCaret ? <span className="vf-caret" /> : null}
               </p>
-              <div ref={textEndRef} />
             </div>
           </div>
-        )}
+        </div>
+        <div className="vf-row">
+          <div className="vf-left">
+            <Logo mode={logoMode} />
+          </div>
+          <div className="vf-center">{center}</div>
+          <div className="vf-right">{right}</div>
+        </div>
       </div>
     </div>
   );

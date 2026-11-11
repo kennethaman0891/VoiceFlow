@@ -1,34 +1,39 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { VadCountdownPayload } from '../types';
 
+const BANDS = 9;
+
 export function useAudioVisualizer(isRecording: boolean) {
-  const [audioBars, setAudioBars] = useState<number[]>([0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15]);
+  const [audioBars, setAudioBars] = useState<number[]>(() => Array(BANDS).fill(0));
+  const [captureReady, setCaptureReady] = useState(false);
   const [isCountingDown, setIsCountingDown] = useState(false);
   const [countdownProgress, setCountdownProgress] = useState(0);
   const [remainingMs, setRemainingMs] = useState(2000);
+  const smoothedRef = useRef<number[]>(Array(16).fill(0));
 
   useEffect(() => {
     if (!isRecording) {
-      setAudioBars([0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12]);
+      smoothedRef.current = Array(16).fill(0);
+      setAudioBars(Array(BANDS).fill(0));
+      setCaptureReady(false);
       setIsCountingDown(false);
       setCountdownProgress(0);
       return;
     }
 
-    // Weights to make the 8 bars look like a natural symmetrical voice waveform
-    const weights = [0.45, 0.75, 0.95, 1.0, 1.0, 0.95, 0.75, 0.45];
-
-    const unlistenLevel = listen<number>('audio_level', (event) => {
-      const level = Math.min(Math.max(event.payload, 0), 1);
-
-      setAudioBars(prev => {
-        return weights.map((w, i) => {
-          const target = Math.max(0.12, Math.min(1.0, level * w * 1.4));
-          // Smooth decay towards target
-          return prev[i] * 0.4 + target * 0.6;
-        });
+    let cancelled = false;
+    const unlistenLevel = listen<number[]>('audio_levels', (event) => {
+      const incoming = Array.isArray(event.payload) ? event.payload : [];
+      const smoothed = smoothedRef.current.map((prev, i) => {
+        const target = typeof incoming[i] === 'number' ? incoming[i] : 0;
+        return prev * 0.7 + target * 0.3;
       });
+      smoothedRef.current = smoothed;
+      if (!cancelled) {
+        setCaptureReady(true);
+        setAudioBars(smoothed.slice(0, BANDS));
+      }
     });
 
     const unlistenCountdown = listen<VadCountdownPayload>('vad_countdown', (event) => {
@@ -43,10 +48,11 @@ export function useAudioVisualizer(isRecording: boolean) {
     });
 
     return () => {
-      unlistenLevel.then(u => u());
-      unlistenCountdown.then(u => u());
+      cancelled = true;
+      unlistenLevel.then((u) => u());
+      unlistenCountdown.then((u) => u());
     };
   }, [isRecording]);
 
-  return { audioBars, isCountingDown, countdownProgress, remainingMs };
+  return { audioBars, captureReady, isCountingDown, countdownProgress, remainingMs };
 }

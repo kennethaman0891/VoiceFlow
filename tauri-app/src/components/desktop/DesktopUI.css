@@ -53,22 +53,23 @@
   height: var(--df-titlebar-height);
   background-color: var(--df-bg-canvas);
   border-bottom: 1px solid var(--df-border);
-  padding: 0 16px;
+  padding: 0 12px 0 16px;
   position: relative;
-  app-region: drag;
-  -webkit-app-region: drag;
 }
 
 .traffic-lights {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-right: 14px;
+  margin-right: 8px;
+  position: relative;
+  z-index: 3;
   app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
 .traffic-light {
+  position: relative;
   width: 12px;
   height: 12px;
   border-radius: 50%;
@@ -77,7 +78,16 @@
   padding: 0;
   display: inline-block;
   opacity: 0.9;
+  flex: 0 0 auto;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
   transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.traffic-light::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
 }
 
 .traffic-light:hover {
@@ -100,12 +110,30 @@
   border: 1px solid #1aab29;
 }
 
+.titlebar-drag {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
 .titlebar-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--df-text-muted);
   letter-spacing: -0.01em;
   pointer-events: none;
+}
+
+.hotkey-caption {
+  margin: 0;
+  padding: 0 16px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--df-text-dim);
 }
 
 /* Main Body Layout (Sidebar + Content) */

@@ -49,7 +49,7 @@ export default function AdvancedView({
 
           <SettingRow
             label="Double-Tap Hands-Free"
-            tooltip="Double-tap the transcription shortcut to start continuous dictation without holding keys."
+            tooltip="Double-tap the Option key to dictate without holding anything. A pause inserts the text, and a second double-tap inserts it early. Hold Option+Space when you only want to talk while the keys are down."
             showReset={false}
           >
             <label className="toggle-switch">
